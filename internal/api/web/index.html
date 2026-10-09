@@ -178,7 +178,7 @@
     <div id="booth" class="hidden">
       <img id="boothqr" alt="Scan to join this event" width="220" height="220">
       <p id="boothname"></p>
-      <label><span>Flight code</span><input id="code" name="code" type="text" maxlength="8" autocapitalize="characters" autocomplete="off" spellcheck="false"></label>
+      <label><span>Flight code</span><input id="code" name="code" type="text" inputmode="numeric" maxlength="4" autocomplete="off" spellcheck="false"></label>
     </div>
     <div id="checkin" class="hidden">
       <label><span>Event</span><select id="events"></select></label>
@@ -247,10 +247,12 @@
       boosters: false,
       boosterDeploy: 0,
       boosterFlash: 0,
+      solar: false,
+      solarDeploy: 0,
       treats: 0,
       treat: null,
       perk: null,
-      standby: false,
+      standbys: 0,
       standbyRescue: false,
       standbyLeft: 0,
       pops: [],
@@ -296,7 +298,10 @@
     function barW() { return Math.max(108, flight.w * 0.09); }
     function pressure() { return flight.pressure || 0; }
     function spacing() { return flight.w * (0.46 - pressure() * 0.1); }
-    function scrollSpeed() { return flight.w * (0.2 + pressure() * 0.05 + (flight.boosters ? 0.03 : 0)); }
+    function scrollSpeed() {
+      const stage = flight.solar ? 0.09 : (flight.boosters ? 0.03 : 0);
+      return flight.w * (0.2 + pressure() * 0.05 + stage);
+    }
     function enemyGap() { return 10 - pressure() * 6.6; }
 
     function makeBar(index, x) {
@@ -375,8 +380,8 @@
       document.querySelector("#cause").textContent = cause;
       document.querySelector("#stamp").classList.remove("hidden");
       blip(90, 0.28, "sawtooth");
-      if (flight.standby) {
-        flight.standby = false;
+      if (flight.standbys > 0) {
+        flight.standbys--;
         flight.standbyRescue = true;
         flight.standbyLeft = 1.15;
         document.querySelector("#cause").textContent = "Standby pod deploying";
@@ -476,7 +481,16 @@
         setTimeout(() => blip(920, 0.12, "square"), 120);
         liftBed();
       }
+      if (!flight.solar && flight.boosters && flight.lived >= 50) {
+        flight.solar = true;
+        flight.boosterFlash = 2.8;
+        blip(160, 0.22, "sawtooth");
+        setTimeout(() => blip(480, 0.16, "square"), 90);
+        setTimeout(() => blip(1040, 0.12, "square"), 200);
+        liftBed(0.3);
+      }
       if (flight.boosters) flight.boosterDeploy = Math.min(1, flight.boosterDeploy + dt * 2.2);
+      if (flight.solar) flight.solarDeploy = Math.min(1, flight.solarDeploy + dt * 1.35);
       flight.boosterFlash = Math.max(0, flight.boosterFlash - dt);
       const speed = scrollSpeed();
       driftStars(dt, speed);
@@ -516,7 +530,7 @@
     }
 
     function offerPerk(bar) {
-      if (flight.standby || flight.perk || flight.treat) return;
+      if (flight.standbys >= 4 || flight.perk || flight.treat) return;
       if (bar.index < 6 || bar.index % 6 !== 5) return;
       if (hash(bar.index + 90) < 0.42) return;
       const span = spacing();
@@ -536,12 +550,12 @@
 
     function collectPerk() {
       const spot = perkSpot();
-      if (!spot || flight.mode !== "flying" || flight.standby) return;
+      if (!spot || flight.mode !== "flying" || flight.standbys >= 4) return;
       const dx = flight.pod.x - spot.x;
       const dy = flight.pod.y - spot.y;
       const reach = flight.pod.r * 2.3 + 36;
       if (dx * dx + dy * dy > reach * reach) return;
-      flight.standby = true;
+      flight.standbys++;
       flight.perk = null;
       flight.pops.push({ text: "STANDBY", x: spot.x, y: spot.y, life: 1, color: "#7ee0ff" });
       blip(520, 0.16, "triangle");
@@ -625,7 +639,7 @@
         flight.oomNext = lived + enemyGap();
       }
       for (const hazard of flight.hazards) {
-        hazard.x -= hazard.vx * dt;
+        hazard.x -= hazard.vx * (flight.solar ? 1.22 : 1) * dt;
         hazard.pulse += dt;
         const wobble = hazard.kind === "crashloop" ? Math.sin(hazard.pulse * 3.2) * flight.h * 0.045 : 0;
         hazard.y = hazard.baseY + wobble;
@@ -711,12 +725,7 @@
         ctx.font = "700 84px Arial Black, Impact, sans-serif";
         ctx.textAlign = "left";
         ctx.fillText(String(flight.score), 28, 118);
-        if (flight.standby && flight.mode === "flying") {
-          ctx.fillStyle = "#7ee0ff";
-          ctx.font = "700 18px Noto Sans Mono, ui-monospace, Menlo, monospace";
-          ctx.textAlign = "left";
-          ctx.fillText("STANDBY POD", 28, 156);
-        }
+        drawBankedStandbys();
         if (flight.mode === "flying" && !flight.flapped) {
           ctx.fillStyle = "#e7f2ec";
           ctx.font = "600 28px Avenir Next, Segoe UI, sans-serif";
@@ -726,10 +735,10 @@
       if (flight.boosterFlash > 0 && flight.mode === "flying") {
         ctx.save();
         ctx.globalAlpha = Math.min(1, flight.boosterFlash * 1.4);
-        ctx.fillStyle = "#c3ff62";
+        ctx.fillStyle = flight.solar ? "#ffe7a3" : "#c3ff62";
         ctx.font = "800 28px Noto Sans Mono, ui-monospace, Menlo, monospace";
         ctx.textAlign = "center";
-        ctx.fillText("TRIPLE BOOSTERS ONLINE", flight.w * 0.5, 72);
+        ctx.fillText(flight.solar ? "INTER-SOLAR BOOSTER" : "TRIPLE BOOSTERS ONLINE", flight.w * 0.5, 72);
         ctx.restore();
       }
       ctx.restore();
@@ -993,18 +1002,15 @@
       }
     }
 
-    function drawPerk() {
-      const spot = perkSpot();
-      if (!spot || flight.mode === "attract") return;
-      const pulse = 0.82 + Math.sin(performance.now() / 140) * 0.18;
-      const r = Math.max(20, flight.pod.r * 1.15);
+    function drawStandbyShip(x, y, r, compact) {
+      const pulse = 0.82 + Math.sin(performance.now() / 140 + y) * 0.18;
       ctx.save();
-      ctx.translate(spot.x, spot.y);
+      ctx.translate(x, y);
       ctx.shadowColor = "#64d8ff";
-      ctx.shadowBlur = 26 + pulse * 18;
+      ctx.shadowBlur = compact ? 10 : 18 + pulse * 14;
       ctx.fillStyle = `rgba(100, 216, 255, ${0.16 + pulse * 0.14})`;
       ctx.beginPath();
-      ctx.ellipse(r * 0.15, 0, r * 2.35, r * 1.45, 0, 0, Math.PI * 2);
+      ctx.ellipse(r * 0.15, 0, r * (compact ? 1.2 : 2.35), r * (compact ? 0.9 : 1.45), 0, 0, Math.PI * 2);
       ctx.fill();
       drawRocketEngine(-r * 1.35, 0, r * 0.62, 1.45);
       ctx.fillStyle = "#444ce7";
@@ -1015,7 +1021,7 @@
       ctx.lineWidth = 3;
       ctx.stroke();
       ctx.shadowColor = "#7ee0ff";
-      ctx.shadowBlur = 18;
+      ctx.shadowBlur = 16;
       ctx.fillStyle = "#e9fbff";
       ctx.beginPath();
       ctx.arc(r * 0.72, -r * 0.04, r * 0.46, 0, Math.PI * 2);
@@ -1025,6 +1031,20 @@
       ctx.lineWidth = 3;
       ctx.stroke();
       ctx.restore();
+    }
+
+    function drawBankedStandbys() {
+      const n = flight.standbys || 0;
+      if (!n || (flight.mode !== "flying" && flight.mode !== "frozen")) return;
+      const r = 16;
+      for (let i = 0; i < n; i++) drawStandbyShip(72, 188 + i * 48, r, true);
+    }
+
+    function drawPerk() {
+      const spot = perkSpot();
+      if (!spot || flight.mode === "attract") return;
+      const r = Math.max(20, flight.pod.r * 1.15);
+      drawStandbyShip(spot.x, spot.y, r);
       ctx.save();
       ctx.fillStyle = "#d8f6ff";
       ctx.font = "700 15px Noto Sans Mono, ui-monospace, Menlo, monospace";
@@ -1153,7 +1173,7 @@
       ctx.fillText(text, 0, y || 1);
     }
 
-    function drawRocketEngine(x, y, radius, flameScale) {
+    function drawRocketEngine(x, y, radius, flameScale, hot) {
       ctx.fillStyle = "#326ce5";
       ctx.beginPath();
       for (let i = 0; i < 6; i++) {
@@ -1172,13 +1192,23 @@
       const flicker = 0.82 + Math.sin(performance.now() / 55 + y) * 0.16;
       const root = x - radius * 0.86;
       const flame = radius * flameScale * flicker;
-      ctx.fillStyle = "#64d8ff";
+      const span = radius * (hot ? 0.62 : 0.44);
+      ctx.fillStyle = hot ? "#ffb020" : "#64d8ff";
       ctx.beginPath();
-      ctx.moveTo(root, y - radius * 0.44);
+      ctx.moveTo(root, y - span);
       ctx.lineTo(root - flame, y);
-      ctx.lineTo(root, y + radius * 0.44);
+      ctx.lineTo(root, y + span);
       ctx.closePath();
       ctx.fill();
+      if (hot) {
+        ctx.fillStyle = "#fff6d0";
+        ctx.beginPath();
+        ctx.moveTo(root, y - span * 0.42);
+        ctx.lineTo(root - flame * 0.62, y);
+        ctx.lineTo(root, y + span * 0.42);
+        ctx.closePath();
+        ctx.fill();
+      }
     }
 
     function drawPod() {
@@ -1189,15 +1219,19 @@
       ctx.rotate(tilt);
       if (flight.invuln > 0 && Math.floor(flight.invuln * 12) % 2 === 0) ctx.globalAlpha = 0.45;
 
-      // One engine becomes a three-rocket booster pack in the back half.
-      const deployed = flight.mode === "attract" ? 0 : flight.boosterDeploy;
-      if (deployed > 0) {
-        const sideR = r * 0.48 * deployed;
-        const sideY = r * (0.38 + deployed * 0.48);
+      // Triple boosters, then one huge inter-solar engine in the last stretch.
+      const grow = flight.mode === "attract" ? 0 : flight.solarDeploy;
+      const pack = flight.mode === "attract" ? 0 : flight.boosterDeploy * (1 - grow);
+      if (pack > 0.04) {
+        const sideR = r * 0.48 * pack;
+        const sideY = r * (0.38 + pack * 0.48);
         drawRocketEngine(-r * 1.3, -sideY, sideR, 1.35);
         drawRocketEngine(-r * 1.3, sideY, sideR, 1.35);
       }
-      drawRocketEngine(-r * 1.48, 0, r * 0.72, flight.boosters ? 1.55 : 1.05);
+      const centerR = r * (0.72 + grow * 1.15);
+      const centerX = -r * (1.48 + grow * 1.28);
+      const flame = grow > 0 ? 1.2 + grow * 2.5 : (flight.boosters ? 1.55 : 1.05);
+      drawRocketEngine(centerX, 0, centerR, flame, grow > 0.2);
 
       ctx.fillStyle = "#444ce7";
       roundRect(-r * 1.15, -r * 0.78, r * 3.05, r * 1.56, r * 0.35);
@@ -1249,7 +1283,9 @@
         ctx.fillStyle = "#dff8ff";
         ctx.fill();
       }
-      ctx.drawImage(img, cx - 360 * scale, cy - 155 * scale, w, h);
+      ctx.translate(cx, cy);
+      ctx.scale(-1, 1);
+      ctx.drawImage(img, -360 * scale, -155 * scale, w, h);
       ctx.restore();
     }
 
@@ -1259,9 +1295,11 @@
       const size = Math.min(flight.w * 0.92, flight.h * 1.05);
       const headX = 390 / img.naturalWidth;
       const headY = 200 / img.naturalHeight;
-      const x = flight.w * 0.62 - headX * size;
-      const y = flight.h * 0.2 - headY * size;
-      ctx.drawImage(img, x, y, size, size);
+      ctx.save();
+      ctx.translate(flight.w * 0.62, flight.h * 0.2);
+      ctx.scale(-1, 1);
+      ctx.drawImage(img, -headX * size, -headY * size, size, size);
+      ctx.restore();
     }
 
     function drawKubeWheel(x, y, r) {
@@ -1355,12 +1393,14 @@
       } catch (e) { /* sound is optional */ }
     }
 
-    function liftBed() {
-      if (!bed || !audioCtx || bed.lifted) return;
-      bed.lifted = true;
+    function liftBed(level) {
+      if (!bed || !audioCtx) return;
+      const target = level || 0.22;
+      if (bed.level && bed.level >= target) return;
+      bed.level = target;
       const now = audioCtx.currentTime;
       bed.master.gain.cancelScheduledValues(now);
-      bed.master.gain.linearRampToValueAtTime(0.22, now + 0.8);
+      bed.master.gain.linearRampToValueAtTime(target, now + 0.8);
     }
 
     function stopBed() {
@@ -1496,7 +1536,7 @@
       flight.treats = 0;
       flight.treat = null;
       flight.perk = null;
-      flight.standby = false;
+      flight.standbys = 0;
       flight.standbyRescue = false;
       flight.standbyLeft = 0;
       flight.hazards = [];
@@ -1512,6 +1552,8 @@
       flight.boosters = false;
       flight.boosterDeploy = 0;
       flight.boosterFlash = 0;
+      flight.solar = false;
+      flight.solarDeploy = 0;
       flight.oomNext = 12;
       document.querySelector("#stamp").classList.add("hidden");
       document.querySelector("#result").classList.add("hidden");
@@ -1610,7 +1652,7 @@
       try {
         let payload;
         if (codeMode()) {
-          payload = { flightCode: document.querySelector("#code").value.trim() };
+          payload = { flightCode: document.querySelector("#code").value.trim(), eventId: flight.eventId };
         } else {
           if (!document.querySelector("#name").value.trim() || !document.querySelector("#title").value.trim()) {
             await recallPlayer();
@@ -1649,10 +1691,12 @@
         flight.boosters = false;
         flight.boosterDeploy = 0;
         flight.boosterFlash = 0;
+        flight.solar = false;
+        flight.solarDeploy = 0;
         flight.treats = 0;
         flight.treat = null;
         flight.perk = null;
-        flight.standby = false;
+        flight.standbys = 0;
         flight.standbyRescue = false;
         flight.standbyLeft = 0;
         flight.pops = [];
@@ -1700,18 +1744,29 @@
       setInterval(pollBoard, 2000);
       setInterval(pollSession, 400);
     }
+    function eventSlug() {
+      const match = location.pathname.match(/^\/event\/([^/]+)\/?$/);
+      return match ? decodeURIComponent(match[1]) : "";
+    }
+    function showEventBooth(event) {
+      flight.eventId = event.id || event.eventId || "";
+      document.querySelector("#booth").classList.remove("hidden");
+      document.querySelector("#boothname").textContent = event.name || event.eventName || flight.eventId;
+      if (event.qrURL) document.querySelector("#boothqr").src = event.qrURL;
+      else document.querySelector("#boothqr").classList.add("hidden");
+      document.querySelector("#pitch").textContent = "Scan the code, finish the form on your phone, then enter the 4-digit flight code.";
+      for (const id of ["email", "name", "title", "consent"]) {
+        document.querySelector("#" + id).closest("label").classList.add("hidden");
+      }
+      document.querySelector("#email").required = false;
+      document.querySelector("#back").classList.add("hidden");
+      document.querySelector("#checkin").classList.add("hidden");
+    }
     async function prepareBooth(booth) {
-      if (booth.eventId) {
-        document.querySelector("#booth").classList.remove("hidden");
-        document.querySelector("#boothname").textContent = booth.eventName || booth.eventId;
-        if (booth.qrURL) document.querySelector("#boothqr").src = booth.qrURL;
-        else document.querySelector("#boothqr").classList.add("hidden");
-        document.querySelector("#pitch").textContent = "Scan the code, finish the form on your phone, then enter the flight code.";
-        for (const id of ["email", "name", "title", "consent"]) {
-          document.querySelector("#" + id).closest("label").classList.add("hidden");
-        }
-        document.querySelector("#email").required = false;
-        document.querySelector("#back").classList.add("hidden");
+      const slug = eventSlug();
+      if (slug) {
+        const res = await fetch("/api/events/" + encodeURIComponent(slug));
+        if (res.ok) showEventBooth(await res.json());
         return;
       }
       if (!booth.employee) return;
@@ -1728,22 +1783,11 @@
       });
       if (!events.length) return;
       document.querySelector("#checkin").classList.remove("hidden");
-      document.querySelector("#pitch").textContent = "Check the booth into an event. Players scan that event's code and bring the flight code back here.";
+      document.querySelector("#pitch").textContent = "Open an event page. The front door stays the open booth.";
     }
-    document.querySelector("#checkin-go").addEventListener("click", async () => {
-      const err = document.querySelector("#err");
-      err.textContent = "";
-      const res = await fetch("/api/kiosk/bind", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ eventId: document.querySelector("#events").value }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        err.textContent = body.error || "Could not open that event.";
-        return;
-      }
-      location.reload();
+    document.querySelector("#checkin-go").addEventListener("click", () => {
+      const id = document.querySelector("#events").value;
+      if (id) location.href = "/event/" + encodeURIComponent(id);
     });
     boot();
   </script>
