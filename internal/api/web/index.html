@@ -1,0 +1,1680 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Kill the worker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --shaft: #080a20;
+      --panel: rgba(12, 14, 43, 0.9);
+      --line: #444ce7;
+      --ink: #f8fafc;
+      --dim: #aeb5d6;
+      --pod: #8b93ff;
+      --hazard: #ff496c;
+      --focus: #64d8ff;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--shaft); color: var(--ink); overflow: hidden; }
+    body { font-family: "Avenir Next", "Segoe UI", sans-serif; }
+    canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+    button { font: inherit; cursor: pointer; }
+    :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+
+    .clock {
+      position: fixed; top: 0; left: 0; right: 0; height: 10px;
+      background: #181b4b; z-index: 3;
+    }
+    .clock > i {
+      display: block; height: 100%; width: 100%;
+      background: var(--pod);
+      transform-origin: left center;
+    }
+    .clock.low > i { background: var(--hazard); }
+    .time {
+      position: fixed; top: 18px; right: 22px; z-index: 4;
+      font-family: "Arial Black", Impact, sans-serif;
+      font-size: 42px; letter-spacing: -0.04em; color: var(--pod);
+      font-variant-numeric: tabular-nums;
+    }
+    .clock.low + .time, .low-time { color: var(--hazard); }
+
+    .dock, .board, .stamp, .result {
+      position: fixed; z-index: 5;
+    }
+    .dock {
+      left: 28px; top: 78px; width: min(380px, calc(100vw - 40px));
+      padding: 22px 22px 18px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      backdrop-filter: blur(8px);
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-family: "Arial Black", Impact, sans-serif;
+      font-size: 44px; line-height: 0.9; letter-spacing: -0.045em; font-weight: 900;
+    }
+    .dock p { margin: 0 0 16px; color: var(--dim); line-height: 1.35; max-width: 34ch; }
+    label { display: block; margin: 0 0 14px; }
+    label span {
+      display: block; margin-bottom: 6px;
+      color: #aebed9;
+      font-family: "Noto Sans Mono", ui-monospace, Menlo, monospace;
+      font-size: 14px; font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase;
+    }
+    .dock input:not([type="checkbox"]) {
+      width: 100%; padding: 6px 0 8px;
+      appearance: none; border: 0; border-radius: 0;
+      border-bottom: 2px solid #92a4c3;
+      background: transparent;
+      color: #f8fafc; -webkit-text-fill-color: #f8fafc; caret-color: #f8fafc;
+      font-family: "Noto Sans Mono", ui-monospace, Menlo, monospace;
+      font-size: 20px; font-weight: 400;
+    }
+    .dock input:not([type="checkbox"]):focus {
+      outline: none; border-bottom-color: #7f86f1;
+    }
+    input:-webkit-autofill {
+      -webkit-text-fill-color: #f8fafc;
+      caret-color: #f8fafc;
+      box-shadow: 0 0 0 1000px #0c0e2b inset;
+    }
+    .consent { display: flex; gap: 8px; align-items: flex-start; margin: 4px 0 16px; color: #aebed9; font-size: 14px; }
+    .consent input { margin-top: 2px; accent-color: #444ce7; width: 16px; height: 16px; }
+    .go {
+      width: 100%; padding: 14px 24px;
+      border: 2px solid transparent;
+      color: #f8fafc;
+      background-image: linear-gradient(45deg, #b664ff 0%, #444ce7 100%);
+      font-family: "Noto Sans Mono", ui-monospace, Menlo, monospace;
+      font-size: 16px; font-weight: 500;
+    }
+    .go:hover { box-shadow: 0 0 0 4px rgba(68, 76, 231, 0.45); }
+    .go:disabled { opacity: 0.55; }
+    .err { min-height: 1.2em; margin: 8px 0 0; color: #ffb4b4; font-size: 14px; }
+    .back { min-height: 1.2em; margin: -6px 0 12px; color: #64d8ff; font-size: 14px; }
+
+    .board {
+      right: 18px; bottom: 16px; width: 240px;
+      padding: 12px 14px 8px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+    }
+    .board h2 { margin: 0 0 8px; font-size: 16px; font-weight: 600; }
+    .board ol { list-style: none; margin: 0; padding: 0; }
+    .board li {
+      display: grid; grid-template-columns: 1.4em 1fr auto; gap: 8px;
+      padding: 4px 0; border-top: 1px solid rgba(47, 106, 82, 0.45);
+      font-variant-numeric: tabular-nums;
+    }
+    .board .who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .board .pts { color: var(--pod); font-family: "Arial Black", Impact, sans-serif; }
+    .board.empty { color: var(--dim); }
+
+    .worker {
+      position: fixed; left: 28px; bottom: 16px; z-index: 4;
+      color: var(--dim); font-size: 13px; font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+    }
+
+    .stamp {
+      left: 50%; top: 42%; transform: translate(-50%, -50%) rotate(-8deg);
+      padding: 10px 18px 14px; text-align: center;
+      color: var(--hazard); border: 6px solid var(--hazard);
+      background: rgba(8, 10, 32, 0.72);
+      font-family: "Arial Black", Impact, sans-serif;
+      font-size: clamp(42px, 8vw, 84px); line-height: 0.9; letter-spacing: -0.04em;
+    }
+    .stamp small { display: block; margin-top: 8px; font-family: "Avenir Next", "Segoe UI", sans-serif; font-size: 18px; letter-spacing: 0; font-weight: 600; }
+
+    .result {
+      left: 50%; top: 50%; z-index: 6;
+      width: min(680px, calc(100vw - 48px));
+      transform: translate(-50%, -50%);
+      padding: 42px 48px 36px;
+      text-align: center;
+      background: #0c0e2b;
+      border: 1px solid var(--line);
+    }
+    .result strong {
+      display: block; font-family: "Arial Black", Impact, sans-serif;
+      font-size: clamp(108px, 16vw, 180px); line-height: 0.82; letter-spacing: -0.05em; color: var(--pod);
+    }
+    .result p { margin: 14px 0 0; color: var(--dim); font-size: clamp(18px, 2.2vw, 24px); }
+    .result a { color: var(--pod); }
+    .result .best {
+      color: #64d8ff; font-family: "Arial Black", Impact, sans-serif;
+      font-size: clamp(28px, 4vw, 44px); line-height: 1; margin-top: 18px;
+    }
+    #again { color: #f8fafc; font-size: clamp(22px, 3vw, 32px); margin-top: 22px; }
+
+    .hidden { display: none !important; }
+    @media (max-width: 720px) {
+      .dock { left: 12px; right: 12px; top: auto; bottom: 12px; width: auto; }
+      .result { width: min(560px, calc(100vw - 24px)); padding: 28px 22px 24px; }
+      .board { display: none; }
+      .board.show { display: block; left: 12px; right: 12px; width: auto; bottom: 12px; }
+      .time { font-size: 32px; top: 16px; right: 12px; }
+      h1 { font-size: 36px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .stamp { transform: translate(-50%, -50%); }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="shaft"></canvas>
+  <div class="clock" id="clock"><i id="clockbar"></i></div>
+  <div class="time" id="time">1:00</div>
+
+  <form class="dock" id="join">
+    <h1>Kill the worker</h1>
+    <p>Fly Ziggy's pod-ship through the cluster. Tap to climb. A wreck deletes the worker running your flight. The clock does not stop while Kubernetes schedules a replacement.</p>
+    <label><span>Email</span><input id="email" name="email" type="email" autocomplete="email" required maxlength="120"></label>
+    <p class="back" id="back"></p>
+    <label><span>Name</span><input id="name" name="name" type="text" autocomplete="name" maxlength="80"></label>
+    <label><span>Title</span><input id="title" name="title" type="text" autocomplete="organization-title" maxlength="80"></label>
+    <label class="consent"><input id="consent" type="checkbox"> You can reach me about the prize.</label>
+    <button class="go" id="start" type="submit">Start flying</button>
+    <p class="err" id="err" role="status"></p>
+  </form>
+
+  <div class="stamp hidden" id="stamp">SHIP DESTROYED<small><span id="cause">Node collision</span><br><span id="waitcopy">Waiting for the Kubernetes scheduler… the clock is still running.</span></small></div>
+
+  <div class="result hidden" id="result">
+    <strong id="final">0</strong>
+    <p class="best" id="best"></p>
+    <p id="finalcopy"></p>
+    <p id="again">Next flight in 8</p>
+  </div>
+
+  <aside class="board" id="board">
+    <h2>Standings</h2>
+    <ol id="standings"></ol>
+  </aside>
+  <div class="worker" id="worker"></div>
+
+  <script>
+    const canvas = document.querySelector("#shaft");
+    const ctx = canvas.getContext("2d");
+    const ziggyOpen = new Image();
+    const ziggyShut = new Image();
+    ziggyOpen.src = "/assets/ziggy-peek.png";
+    ziggyShut.src = "/assets/ziggy-blink.png";
+    const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const boardOnly = new URLSearchParams(location.search).has("board");
+
+    const flight = {
+      mode: "attract",
+      seed: 1,
+      score: 0,
+      acked: 0,
+      crashes: 0,
+      deadline: 0,
+      duration: 60,
+      worker: "",
+      sessionId: "",
+      pod: { x: 0, y: 0, vy: 0, r: 18 },
+      bars: [],
+      nextIndex: 0,
+      invuln: 0,
+      shake: 0,
+      sending: false,
+      crashAccepted: false,
+      crashSending: false,
+      debris: [],
+      respawnFlash: 0,
+      hazards: [],
+      oomCount: 0,
+      oomNext: 12,
+      lived: 0,
+      pressure: 0,
+      restartCount: 0,
+      boosters: false,
+      boosterDeploy: 0,
+      boosterFlash: 0,
+      treats: 0,
+      treat: null,
+      perk: null,
+      standby: false,
+      standbyRescue: false,
+      standbyLeft: 0,
+      pops: [],
+      treatFlash: 0,
+      restartWave: null,
+      restartDone: false,
+      starFar: 0,
+      starNear: 0,
+      attractIndex: 1,
+      personalBest: 0,
+      gamesPlayed: 0,
+      w: 0,
+      h: 0,
+    };
+
+    let meta = { durationSeconds: 60, temporalUI: "", namespace: "default" };
+
+    function resize() {
+      const dpr = Math.min(devicePixelRatio || 1, 2);
+      flight.w = innerWidth;
+      flight.h = innerHeight;
+      canvas.width = Math.floor(flight.w * dpr);
+      canvas.height = Math.floor(flight.h * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      if (flight.mode === "attract") {
+        flight.bars = [];
+        flight.hazards = [];
+        flight.restartWave = null;
+        flight.attractIndex = 1;
+      }
+      placeShip();
+    }
+    addEventListener("resize", resize);
+    resize();
+
+    function hash(i) {
+      let h = (flight.seed ^ Math.imul(i + 1, 0x9e3779b1)) >>> 0;
+      h = Math.imul(h ^ (h >>> 16), 0x7feb352d);
+      h = Math.imul(h ^ (h >>> 15), 0x846ca68b);
+      return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+    }
+    function gapSize() { return flight.h * 0.38; }
+    function barW() { return Math.max(108, flight.w * 0.09); }
+    function pressure() { return flight.pressure || 0; }
+    function spacing() { return flight.w * (0.46 - pressure() * 0.1); }
+    function scrollSpeed() { return flight.w * (0.2 + pressure() * 0.05 + (flight.boosters ? 0.03 : 0)); }
+    function enemyGap() { return 10 - pressure() * 6.6; }
+
+    function makeBar(index, x) {
+      const gap = gapSize();
+      const margin = flight.h * 0.12;
+      const usable = Math.max(1, flight.h - margin * 2 - gap);
+      return { index, x, w: barW(), gapTop: margin + hash(index) * usable, gap, scored: false };
+    }
+
+    function placeShip() {
+      if (flight.mode === "attract") {
+        flight.pod.r = Math.max(42, Math.min(flight.h * 0.085, flight.w * 0.075));
+        flight.pod.x = attractX();
+        return;
+      }
+      flight.pod.r = Math.max(14, Math.min(22, flight.h * 0.028));
+      flight.pod.x = flight.w * 0.28;
+    }
+
+    function attractX() {
+      if (flight.w < 720) return flight.w * 0.55;
+      return Math.min(flight.w - flight.pod.r * 3, Math.max(430 + flight.pod.r * 2.4, flight.w * 0.5));
+    }
+
+    function armCourse() {
+      placeShip();
+      flight.bars = [makeBar(flight.score, flight.w * 0.78)];
+      flight.hazards = [];
+      flight.treat = null;
+      flight.restartWave = null;
+      flight.nextIndex = flight.score + 1;
+      const b = flight.bars[0];
+      flight.pod.y = b.gapTop + b.gap / 2;
+      flight.pod.vy = 0;
+      flight.invuln = 0.7;
+    }
+
+    function flap(ev) {
+      if (flight.mode !== "flying") return;
+      const t = ev && ev.target;
+      if (t && (t.closest("input, textarea, button, a, form"))) return;
+      if (ev && ev.cancelable) ev.preventDefault();
+      flight.pod.vy = -flight.h * 0.82;
+      flight.flapped = true;
+      blip(540, 0.05, "square");
+    }
+    addEventListener("pointerdown", flap);
+    addEventListener("keydown", (ev) => {
+      if (ev.code === "Space" || ev.code === "ArrowUp") flap(ev);
+    });
+
+    function hit(bar) {
+      const r = flight.pod.r;
+      const botY = bar.gapTop + bar.gap;
+      const shipLeft = flight.pod.x - r * 1.75;
+      const shipRight = flight.pod.x + r * 1.75;
+      const overlapsBar = shipRight > bar.x && shipLeft < bar.x + bar.w;
+      return overlapsBar &&
+        (flight.pod.y - r * 0.66 < bar.gapTop || flight.pod.y + r * 0.66 > botY);
+    }
+
+    function crash(cause = "Node collision") {
+      if (flight.mode !== "flying" || flight.invuln > 0) return;
+      flight.mode = "frozen";
+      flight.shake = reduce ? 0 : 14;
+      flight.debris = Array.from({ length: reduce ? 7 : 16 }, (_, i) => ({
+        x: flight.pod.x + (Math.random() - 0.5) * flight.pod.r * 2,
+        y: flight.pod.y + (Math.random() - 0.5) * flight.pod.r * 2,
+        vx: (Math.random() - 0.5) * flight.w * 0.24,
+        vy: (Math.random() - 0.6) * flight.h * 0.34,
+        spin: (Math.random() - 0.5) * 9,
+        angle: Math.random() * Math.PI,
+        size: flight.pod.r * (0.25 + Math.random() * 0.55),
+        color: i % 3 === 0 ? "#326ce5" : i % 3 === 1 ? "#444ce7" : "#dce8ff",
+      }));
+      document.querySelector("#cause").textContent = cause;
+      document.querySelector("#stamp").classList.remove("hidden");
+      blip(90, 0.28, "sawtooth");
+      if (flight.standby) {
+        flight.standby = false;
+        flight.standbyRescue = true;
+        flight.standbyLeft = 1.15;
+        document.querySelector("#cause").textContent = "Standby pod deploying";
+        document.querySelector("#waitcopy").textContent = "A warm pod is already waiting. Redeploying…";
+        return;
+      }
+      document.querySelector("#waitcopy").textContent = "Waiting for the Kubernetes scheduler… the clock is still running.";
+      postCrash();
+    }
+
+    function redeployStandby() {
+      const bar = flight.bars.find((item) => item.x < flight.pod.x + flight.pod.r * 2 && item.x + item.w > flight.pod.x - flight.pod.r * 2)
+        || flight.bars.find((item) => item.x > flight.pod.x);
+      flight.pod.y = bar ? bar.gapTop + bar.gap / 2 : flight.h * 0.45;
+      flight.pod.vy = 0;
+      flight.mode = "flying";
+      flight.debris = [];
+      flight.invuln = 1.2;
+      flight.respawnFlash = 1;
+      flight.standbyRescue = false;
+      flight.standbyLeft = 0;
+      document.querySelector("#stamp").classList.add("hidden");
+      document.querySelector("#waitcopy").textContent = "Waiting for the Kubernetes scheduler… the clock is still running.";
+      blip(680, 0.12, "square");
+    }
+
+    async function postCrash() {
+      if (!flight.sessionId || flight.crashAccepted || flight.crashSending) return;
+      flight.crashSending = true;
+      try {
+        const res = await fetch("/api/sessions/" + flight.sessionId + "/crash", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}",
+        });
+        if (res.status === 202 || res.status === 200) flight.crashAccepted = true;
+      } catch (e) { /* poll will retry while the flight is still live */ }
+      flight.crashSending = false;
+    }
+
+    async function flushGates() {
+      if (flight.sending || flight.mode !== "flying" || flight.acked >= flight.score) return;
+      const gate = flight.acked + 1;
+      flight.sending = true;
+      try {
+        const res = await fetch("/api/sessions/" + flight.sessionId + "/gates", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ gate }),
+        });
+        if (res.ok) {
+          const body = await res.json();
+          flight.acked = body.score;
+        }
+      } catch (e) { /* retry next frame */ }
+      flight.sending = false;
+    }
+
+    function step(dt) {
+      if (flight.mode === "attract") {
+        stepAttract(dt);
+        return;
+      }
+      if (flight.mode === "done") {
+        driftStars(dt, scrollSpeed() * 0.25);
+        return;
+      }
+      if (flight.mode === "frozen") {
+        for (const bit of flight.debris) {
+          bit.vy += flight.h * 0.45 * dt;
+          bit.x += bit.vx * dt;
+          bit.y += bit.vy * dt;
+          bit.angle += bit.spin * dt;
+        }
+        if (flight.standbyRescue) {
+          flight.standbyLeft -= dt;
+          if (flight.standbyLeft <= 0) redeployStandby();
+        }
+        return;
+      }
+      if (flight.mode !== "flying") return;
+      flight.respawnFlash = Math.max(0, flight.respawnFlash - dt);
+      flight.invuln = Math.max(0, flight.invuln - dt);
+      const g = flight.h * 1.85;
+      flight.pod.vy = Math.min(flight.pod.vy + g * dt, flight.h * 0.95);
+      flight.pod.y += flight.pod.vy * dt;
+      if (flight.pod.y < flight.pod.r || flight.pod.y > flight.h - flight.pod.r) {
+        crash("Pod evicted from the flight path");
+        return;
+      }
+      flight.lived += dt;
+      flight.pressure = Math.max(0, Math.min(1, (flight.lived - 12) / 40));
+      if (!flight.boosters && flight.lived >= 32) {
+        flight.boosters = true;
+        flight.boosterFlash = 2.6;
+        blip(720, 0.14, "sawtooth");
+        setTimeout(() => blip(920, 0.12, "square"), 120);
+        liftBed();
+      }
+      if (flight.boosters) flight.boosterDeploy = Math.min(1, flight.boosterDeploy + dt * 2.2);
+      flight.boosterFlash = Math.max(0, flight.boosterFlash - dt);
+      const speed = scrollSpeed();
+      driftStars(dt, speed);
+      for (const bar of flight.bars) bar.x -= speed * dt;
+      if (flight.perk) {
+        flight.perk.x -= speed * dt;
+        if (flight.perk.x < -80) flight.perk = null;
+      }
+      const last = flight.bars[flight.bars.length - 1];
+      if (!last || last.x < flight.w - spacing()) {
+        const x = last ? last.x + spacing() : flight.w * 0.78;
+        const bar = makeBar(flight.nextIndex, x);
+        flight.bars.push(bar);
+        offerTreat(bar);
+        offerPerk(bar);
+        flight.nextIndex++;
+      }
+      flight.bars = flight.bars.filter((bar) => bar.x + bar.w > -40);
+      if (flight.treat && !flight.bars.some((bar) => bar.index === flight.treat.index)) flight.treat = null;
+      for (const bar of flight.bars) {
+        if (!bar.scored && bar.x + bar.w < flight.pod.x) {
+          bar.scored = true;
+          flight.score++;
+          blip(880, 0.07, "square");
+        }
+        if (flight.invuln <= 0 && hit(bar)) {
+          crash("Asteroid strike");
+          return;
+        }
+      }
+      collectTreat();
+      collectPerk();
+      if (flight.mode !== "flying") return;
+      updateHazards(dt);
+      if (flight.mode !== "flying") return;
+      flushGates();
+    }
+
+    function offerPerk(bar) {
+      if (flight.standby || flight.perk || flight.treat) return;
+      if (bar.index < 6 || bar.index % 6 !== 5) return;
+      if (hash(bar.index + 90) < 0.42) return;
+      const span = spacing();
+      const corridor = Math.max(120, span - bar.w);
+      const next = makeBar(bar.index + 1, 0);
+      const center = next.gapTop + next.gap / 2;
+      const floor = flight.h - Math.max(120, flight.pod.r * 5.5);
+      // Sit in the lower air between the columns. Cap the dive so a climb
+      // still reaches the next opening before the rocks arrive.
+      const y = Math.min(floor, flight.h * 0.72, center + flight.h * 0.2);
+      flight.perk = { x: bar.x + bar.w + corridor * 0.5, y };
+    }
+
+    function perkSpot() {
+      return flight.perk;
+    }
+
+    function collectPerk() {
+      const spot = perkSpot();
+      if (!spot || flight.mode !== "flying" || flight.standby) return;
+      const dx = flight.pod.x - spot.x;
+      const dy = flight.pod.y - spot.y;
+      const reach = flight.pod.r * 2.3 + 36;
+      if (dx * dx + dy * dy > reach * reach) return;
+      flight.standby = true;
+      flight.perk = null;
+      flight.pops.push({ text: "STANDBY", x: spot.x, y: spot.y, life: 1, color: "#7ee0ff" });
+      blip(520, 0.16, "triangle");
+    }
+
+    function offerTreat(bar) {
+      const max = meta.maxTreats || 4;
+      if (flight.treat || flight.treats >= max) return;
+      if (bar.index < 4 || bar.index % 5 !== 4) return;
+      flight.treat = { index: bar.index };
+    }
+
+    function treatSpot() {
+      if (!flight.treat) return null;
+      const bar = flight.bars.find((item) => item.index === flight.treat.index);
+      if (!bar) return null;
+      return { x: bar.x + bar.w / 2, y: bar.gapTop + bar.gap / 2 };
+    }
+
+    function collectTreat() {
+      const spot = treatSpot();
+      if (!spot || flight.mode !== "flying") return;
+      const dx = flight.pod.x - spot.x;
+      const dy = flight.pod.y - spot.y;
+      const reach = flight.pod.r * 2.2 + 34;
+      if (dx * dx + dy * dy > reach * reach) return;
+      flight.pops.push({ text: "+8s", x: spot.x, y: spot.y, life: 1 });
+      flight.treat = null;
+      flight.treatFlash = 1.2;
+      blip(660, 0.12, "triangle");
+      postTreat(flight.treats + 1);
+    }
+
+    async function postTreat(treat) {
+      if (!flight.sessionId || flight.treatSending) return;
+      flight.treatSending = true;
+      try {
+        const res = await fetch("/api/sessions/" + flight.sessionId + "/treats", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ treat }),
+        });
+        if (res.ok) {
+          const body = await res.json();
+          flight.treats = body.treats;
+          if (body.deadline) flight.deadline = Date.parse(body.deadline);
+        }
+      } catch (e) { /* the next poll still carries the deadline */ }
+      flight.treatSending = false;
+    }
+
+    function enemyLaneClear() {
+      if (flight.restartWave || flight.treat) return false;
+      if (!flight.hazards.length) return true;
+      if (pressure() < 0.7 || flight.hazards.length >= 2) return false;
+      return flight.hazards.every((hazard) => hazard.x < flight.w * 0.58);
+    }
+
+    function updateHazards(dt) {
+      const lived = flight.lived || 0;
+      if (flight.score >= 2 && lived >= flight.oomNext && enemyLaneClear()) {
+        const kinds = ["oom", "crashloop", "evict", "pull"];
+        const kind = kinds[flight.oomCount % kinds.length];
+        const size = Math.max(52, flight.pod.r * 2.35);
+        let baseY = flight.h * (0.22 + hash(800 + flight.oomCount) * 0.56);
+        for (const hazard of flight.hazards) {
+          if (Math.abs(baseY - hazard.baseY) < flight.h * 0.28) {
+            baseY = hazard.baseY > flight.h * 0.5 ? flight.h * 0.26 : flight.h * 0.74;
+          }
+        }
+        flight.hazards.push({
+          kind,
+          x: flight.w + size * 2,
+          baseY,
+          y: baseY,
+          size,
+          vx: flight.w * ((kind === "pull" ? 0.16 : 0.2) + pressure() * 0.05),
+          pulse: 0,
+        });
+        flight.oomCount++;
+        flight.oomNext = lived + enemyGap();
+      }
+      for (const hazard of flight.hazards) {
+        hazard.x -= hazard.vx * dt;
+        hazard.pulse += dt;
+        const wobble = hazard.kind === "crashloop" ? Math.sin(hazard.pulse * 3.2) * flight.h * 0.045 : 0;
+        hazard.y = hazard.baseY + wobble;
+        const half = hazard.size * 0.5;
+        const shipX = flight.pod.x, shipY = flight.pod.y, r = flight.pod.r;
+        if (flight.invuln <= 0 &&
+            Math.abs(shipX - hazard.x) < r * 1.5 + half &&
+            Math.abs(shipY - hazard.y) < r * 0.7 + half) {
+          crash(hazardCause(hazard.kind));
+          return;
+        }
+      }
+      flight.hazards = flight.hazards.filter((hazard) => hazard.x + hazard.size > -20);
+
+      // One generous rolling-restart wave arrives in the back half. Its gap
+      // is much larger than a normal gate and it warns before moving.
+      const nextWave = flight.restartCount === 0
+        ? flight.score >= 7 && lived >= 28
+        : flight.restartCount === 1 && lived >= 58;
+      if (nextWave && !flight.hazards.length && !flight.treat && !flight.restartWave) {
+        flight.restartCount++;
+        flight.restartDone = true;
+        flight.restartWave = {
+          state: "warning",
+          timer: 1.8,
+          x: flight.w + 80,
+          w: 76,
+          gap: flight.h * 0.52,
+          gapTop: flight.h * (0.12 + hash(1200 + flight.restartCount) * 0.24),
+        };
+      }
+      const wave = flight.restartWave;
+      if (!wave) return;
+      if (wave.state === "warning") {
+        wave.timer -= dt;
+        if (wave.timer <= 0) wave.state = "active";
+        return;
+      }
+      wave.x -= flight.w * 0.16 * dt;
+      const shipLeft = flight.pod.x - flight.pod.r * 1.7;
+      const shipRight = flight.pod.x + flight.pod.r * 1.7;
+      const overlaps = shipRight > wave.x && shipLeft < wave.x + wave.w;
+      if (flight.invuln <= 0 && overlaps &&
+          (flight.pod.y - flight.pod.r * 0.65 < wave.gapTop ||
+           flight.pod.y + flight.pod.r * 0.65 > wave.gapTop + wave.gap)) {
+        crash("Caught in a wild rolling restart");
+        return;
+      }
+      if (wave.x + wave.w < -20) flight.restartWave = null;
+    }
+
+    function draw() {
+      const { w, h } = flight;
+      ctx.clearRect(0, 0, w, h);
+      const g = ctx.createLinearGradient(0, 0, 0, h);
+      g.addColorStop(0, "#151947");
+      g.addColorStop(0.55, "#0b0e2c");
+      g.addColorStop(1, "#050716");
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, w, h);
+      drawStars();
+      if (flight.mode === "done") {
+        drawScoreZiggy();
+        return;
+      }
+      drawTraffic();
+
+      ctx.save();
+      if (flight.shake > 0) {
+        ctx.translate((Math.random() - 0.5) * flight.shake, (Math.random() - 0.5) * flight.shake);
+        flight.shake *= 0.86;
+      }
+      const bars = flight.bars;
+      for (const bar of bars) drawRack(bar);
+      drawTreat();
+      drawPerk();
+      drawHazards();
+      drawPops();
+      if (flight.mode === "frozen") drawWreck();
+      else drawPod();
+      if (flight.mode === "flying" || flight.mode === "frozen") {
+        ctx.fillStyle = "#f3c14e";
+        ctx.font = "700 84px Arial Black, Impact, sans-serif";
+        ctx.textAlign = "left";
+        ctx.fillText(String(flight.score), 28, 118);
+        if (flight.standby && flight.mode === "flying") {
+          ctx.fillStyle = "#7ee0ff";
+          ctx.font = "700 18px Noto Sans Mono, ui-monospace, Menlo, monospace";
+          ctx.textAlign = "left";
+          ctx.fillText("STANDBY POD", 28, 156);
+        }
+        if (flight.mode === "flying" && !flight.flapped) {
+          ctx.fillStyle = "#e7f2ec";
+          ctx.font = "600 28px Avenir Next, Segoe UI, sans-serif";
+          ctx.fillText("tap", flight.pod.x + flight.pod.r + 16, flight.pod.y + 8);
+        }
+      }
+      if (flight.boosterFlash > 0 && flight.mode === "flying") {
+        ctx.save();
+        ctx.globalAlpha = Math.min(1, flight.boosterFlash * 1.4);
+        ctx.fillStyle = "#c3ff62";
+        ctx.font = "800 28px Noto Sans Mono, ui-monospace, Menlo, monospace";
+        ctx.textAlign = "center";
+        ctx.fillText("TRIPLE BOOSTERS ONLINE", flight.w * 0.5, 72);
+        ctx.restore();
+      }
+      ctx.restore();
+    }
+
+    function attractOpening(high) {
+      const r = flight.pod.r || 48;
+      const gap = Math.min(flight.h * 0.5, Math.max(flight.h * 0.4, r * 4.6));
+      const inset = Math.max(20, r * 0.35);
+      const room = Math.max(inset, flight.h - gap - inset);
+      let gapTop = high ? inset : room;
+      if (flight.w < 720) gapTop = Math.min(gapTop, Math.max(inset, flight.h * 0.52 - gap));
+      return { gap, gapTop };
+    }
+
+    function attractAhead() {
+      let right = -1;
+      for (const bar of flight.bars) right = Math.max(right, bar.x + bar.w);
+      for (const hazard of flight.hazards) right = Math.max(right, hazard.x + hazard.size * 0.5);
+      if (flight.restartWave) right = Math.max(right, flight.restartWave.x + flight.restartWave.w);
+      return right;
+    }
+
+    function spawnAttract(x) {
+      const beat = flight.attractIndex++ % 5;
+      if (beat === 4) {
+        const gap = Math.min(flight.h * 0.52, Math.max(flight.h * 0.44, flight.pod.r * 4.8));
+        const inset = Math.max(20, flight.pod.r * 0.35);
+        flight.restartWave = {
+          state: "active",
+          x,
+          w: 76,
+          gap,
+          gapTop: flight.w < 720 ? inset : (flight.h - gap) * 0.5,
+        };
+        return;
+      }
+      if (beat === 1 || beat === 3) {
+        const kinds = ["oom", "evict", "crashloop", "pull"];
+        const size = Math.max(52, flight.pod.r * 1.25);
+        const enemyHigh = beat === 3;
+        const y = enemyHigh ? flight.h * 0.24 : flight.h * 0.76;
+        const passY = enemyHigh ? flight.h * 0.7 : flight.h * 0.28;
+        flight.hazards.push({
+          kind: kinds[flight.attractIndex % 4],
+          x,
+          baseY: y,
+          y,
+          size,
+          pulse: 0,
+          passY,
+        });
+        return;
+      }
+      const { gap, gapTop } = attractOpening(beat === 0);
+      flight.bars.push({ index: flight.attractIndex, x, w: barW(), gapTop, gap, scored: true });
+    }
+
+    function attractTarget() {
+      const shipX = flight.pod.x;
+      let target = flight.pod.y || flight.h * 0.4;
+      let best = Infinity;
+      const take = (x, mid) => {
+        if (x < shipX - flight.pod.r * 2) return;
+        if (x < best) {
+          best = x;
+          target = mid;
+        }
+      };
+      for (const bar of flight.bars) take(bar.x, bar.gapTop + bar.gap / 2);
+      for (const hazard of flight.hazards) take(hazard.x, hazard.passY || flight.h * 0.4);
+      const wave = flight.restartWave;
+      if (wave) take(wave.x, wave.gapTop + wave.gap / 2);
+      for (const bar of flight.bars) {
+        if (bar.x > shipX + flight.pod.r * 2.2) continue;
+        if (bar.x + bar.w < shipX - flight.pod.r * 2) continue;
+        target = bar.gapTop + bar.gap / 2;
+      }
+      if (wave && wave.x < shipX + flight.pod.r * 2.2 && wave.x + wave.w > shipX - flight.pod.r * 2) {
+        const blocked = flight.bars.some((bar) => shipX + flight.pod.r * 1.6 > bar.x && shipX - flight.pod.r * 1.6 < bar.x + bar.w);
+        if (!blocked) target = wave.gapTop + wave.gap / 2;
+      }
+      const pad = flight.pod.r * 0.95;
+      return Math.max(pad, Math.min((flight.w < 720 ? flight.h * 0.55 : flight.h) - pad, target));
+    }
+
+    function stepAttract(dt) {
+      placeShip();
+      if (!flight.bars.length && !flight.hazards.length && !flight.restartWave) {
+        flight.attractIndex = 0;
+        spawnAttract(Math.max(flight.pod.x + flight.pod.r * 4, flight.w * 0.86));
+        const open = flight.bars[0];
+        if (open) flight.pod.y = open.gapTop + open.gap / 2;
+      }
+      if (reduce) {
+        flight.pod.vy = 0;
+        const open = flight.bars[0];
+        if (open) flight.pod.y = open.gapTop + open.gap / 2;
+        return;
+      }
+      const speed = scrollSpeed() * 0.5;
+      driftStars(dt, speed);
+      for (const bar of flight.bars) bar.x -= speed * dt;
+      for (const hazard of flight.hazards) {
+        hazard.x -= speed * dt;
+        hazard.pulse += dt;
+        const wobble = hazard.kind === "crashloop" ? Math.sin(hazard.pulse * 2.4) * flight.h * 0.02 : 0;
+        hazard.y = hazard.baseY + wobble;
+      }
+      if (flight.restartWave) flight.restartWave.x -= speed * dt;
+      flight.bars = flight.bars.filter((bar) => bar.x + bar.w > -60);
+      flight.hazards = flight.hazards.filter((hazard) => hazard.x + hazard.size > -60);
+      if (flight.restartWave && flight.restartWave.x + flight.restartWave.w < -60) flight.restartWave = null;
+      if (attractAhead() < flight.pod.x - flight.pod.r) spawnAttract(flight.w + 80);
+
+      const dy = attractTarget() - flight.pod.y;
+      const desired = Math.max(-flight.h * 0.7, Math.min(flight.h * 0.7, dy * 3.2));
+      flight.pod.vy += (desired - flight.pod.vy) * Math.min(1, dt * 4);
+      flight.pod.y += flight.pod.vy * dt;
+    }
+
+    function drawTraffic() {
+      const t = performance.now() / 1000;
+      const labels = ["pod/api", "svc/front", "cm/config", "job/batch", "sa/booth", "ep/7233"];
+      ctx.save();
+      ctx.font = "500 13px Noto Sans Mono, ui-monospace, Menlo, monospace";
+      ctx.textBaseline = "middle";
+      labels.forEach((label, i) => {
+        const topLane = i < 3;
+        const y = topLane ? 78 + i * 20 : flight.h - 52 - (i - 3) * 22;
+        const span = flight.w + 220;
+        const x = ((hash(i + 70) * span) - t * (22 + i * 7)) % span;
+        const px = x < -80 ? x + span : x;
+        ctx.globalAlpha = 0.72;
+        ctx.strokeStyle = "#444ce7";
+        ctx.strokeRect(px, y - 8, 16, 16);
+        ctx.fillStyle = "#7f86f1";
+        ctx.fillRect(px + 4, y - 4, 8, 8);
+        ctx.fillStyle = "#d5def2";
+        ctx.fillText(label, px + 22, y);
+      });
+      ctx.restore();
+    }
+
+    function driftStars(dt, speed) {
+      if (reduce) return;
+      const span = flight.w + 40;
+      flight.starFar = (flight.starFar + speed * 0.07 * dt) % span;
+      flight.starNear = (flight.starNear + speed * 0.18 * dt) % span;
+    }
+
+    function drawStars() {
+      const layers = [
+        { drift: flight.starFar, count: 70, alpha: 0.4, scale: 1, salt: 101 },
+        { drift: flight.starNear, count: 32, alpha: 0.75, scale: 1.7, salt: 280 },
+      ];
+      const span = flight.w + 40;
+      for (const layer of layers) {
+        ctx.fillStyle = "rgba(214, 222, 244, " + layer.alpha + ")";
+        for (let i = 0; i < layer.count; i++) {
+          const x = (hash(i + layer.salt) * span - layer.drift + span) % span;
+          const y = hash(i + layer.salt + 400) * flight.h;
+          const size = (0.7 + (i % 3) * 0.55) * layer.scale;
+          ctx.fillRect(x, y, size, size);
+        }
+      }
+    }
+    function drawRock(cx, cy, radius, seed) {
+      const n = 7;
+      ctx.beginPath();
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2 - 0.5;
+        const wobble = 0.78 + hash(seed + i * 5) * 0.38;
+        const px = cx + Math.cos(a) * radius * wobble;
+        const py = cy + Math.sin(a) * radius * wobble * 0.92;
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }
+      ctx.closePath();
+      const tone = hash(seed + 11);
+      ctx.fillStyle = tone > 0.66 ? "#8d7360" : tone > 0.33 ? "#5c6578" : "#6e6258";
+      ctx.fill();
+      ctx.strokeStyle = "#e7d3c0";
+      ctx.lineWidth = Math.max(1.5, radius * 0.08);
+      ctx.stroke();
+      ctx.fillStyle = "rgba(12, 10, 18, .4)";
+      ctx.beginPath();
+      ctx.arc(cx - radius * 0.18, cy - radius * 0.08, radius * 0.22, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "rgba(255, 236, 210, .55)";
+      ctx.beginPath();
+      ctx.arc(cx + radius * 0.28, cy - radius * 0.22, radius * 0.08, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    function drawRack(bar) {
+      const bot = bar.gapTop + bar.gap;
+      const pack = (y0, y1, salt) => {
+        if (y1 - y0 < 36) return;
+        let y = y0;
+        let i = 0;
+        while (y < y1 - 10 && i < 16) {
+          const span = Math.max(24, y1 - y);
+          const radius = Math.max(15, Math.min(bar.w * 0.26, span * 0.42));
+          const side = (i + salt) % 2 === 0 ? -1 : 1;
+          const ox = side * bar.w * 0.24;
+          const cy = Math.min(y1 - radius * 0.8, Math.max(y0 + radius * 0.8, y + radius));
+          drawRock(bar.x + bar.w / 2 + ox, cy, radius, bar.index * 50 + salt * 9 + i);
+          y = cy + radius * 0.85;
+          i++;
+        }
+      };
+      pack(0, bar.gapTop, 2);
+      pack(bot, flight.h, 90);
+    }
+
+    function drawTreat() {
+      const spot = treatSpot();
+      if (!spot || flight.mode === "attract") return;
+      const pulse = 1 + Math.sin(performance.now() / 140) * 0.08;
+      const r = 34 * pulse;
+      ctx.save();
+      ctx.translate(spot.x, spot.y);
+      ctx.shadowColor = "#c3ff62";
+      ctx.shadowBlur = 22;
+      ctx.fillStyle = "rgba(195, 255, 98, 0.28)";
+      ctx.beginPath();
+      ctx.arc(0, 0, r + 16, 0, Math.PI * 2);
+      ctx.fill();
+      const orb = ctx.createRadialGradient(-8, -10, 4, 0, 0, r);
+      orb.addColorStop(0, "#f4ffd2");
+      orb.addColorStop(0.45, "#c3ff62");
+      orb.addColorStop(1, "#1ff1a5");
+      ctx.fillStyle = orb;
+      ctx.beginPath();
+      ctx.arc(0, 0, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = "#141414";
+      ctx.stroke();
+      ctx.fillStyle = "#141414";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = "800 22px Arial Black, Impact, sans-serif";
+      ctx.fillText("+8s", 0, 1);
+      ctx.restore();
+    }
+
+    function drawPops() {
+      flight.pops = flight.pops.filter((pop) => pop.life > 0);
+      for (const pop of flight.pops) {
+        pop.life -= 0.015;
+        pop.y -= 0.7;
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, pop.life);
+        ctx.fillStyle = pop.color || "#c3ff62";
+        ctx.font = "800 28px Arial Black, Impact, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(pop.text, pop.x, pop.y - 46);
+        ctx.restore();
+      }
+    }
+
+    function drawPerk() {
+      const spot = perkSpot();
+      if (!spot || flight.mode === "attract") return;
+      const pulse = 0.82 + Math.sin(performance.now() / 140) * 0.18;
+      const r = Math.max(20, flight.pod.r * 1.15);
+      ctx.save();
+      ctx.translate(spot.x, spot.y);
+      ctx.shadowColor = "#64d8ff";
+      ctx.shadowBlur = 26 + pulse * 18;
+      ctx.fillStyle = `rgba(100, 216, 255, ${0.16 + pulse * 0.14})`;
+      ctx.beginPath();
+      ctx.ellipse(r * 0.15, 0, r * 2.35, r * 1.45, 0, 0, Math.PI * 2);
+      ctx.fill();
+      drawRocketEngine(-r * 1.35, 0, r * 0.62, 1.45);
+      ctx.fillStyle = "#444ce7";
+      roundRect(-r * 1.05, -r * 0.72, r * 2.85, r * 1.44, r * 0.32);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = "#d8fbff";
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.shadowColor = "#7ee0ff";
+      ctx.shadowBlur = 18;
+      ctx.fillStyle = "#e9fbff";
+      ctx.beginPath();
+      ctx.arc(r * 0.72, -r * 0.04, r * 0.46, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = "#64d8ff";
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.restore();
+      ctx.save();
+      ctx.fillStyle = "#d8f6ff";
+      ctx.font = "700 15px Noto Sans Mono, ui-monospace, Menlo, monospace";
+      ctx.textAlign = "center";
+      ctx.fillText("STANDBY", spot.x, spot.y - r * 1.55);
+      ctx.restore();
+    }
+
+    function hazardCause(kind) {
+      if (kind === "crashloop") return "CrashLoopBackOff";
+      if (kind === "evict") return "Evicted";
+      if (kind === "pull") return "ImagePullBackOff";
+      return "OOMKilled";
+    }
+
+    function drawHazards() {
+      for (const hazard of flight.hazards) drawEnemy(hazard);
+
+      const wave = flight.restartWave;
+      if (!wave) return;
+      if (wave.state === "warning") {
+        ctx.save();
+        ctx.fillStyle = `rgba(255,73,108,${0.65 + Math.sin(performance.now() / 90) * 0.25})`;
+        ctx.font = "800 22px Arial Black, Impact, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("ROLLING RESTART INCOMING", flight.w * 0.58, 52);
+        ctx.restore();
+        return;
+      }
+      drawPodColumn(wave.x, wave.w, 0, wave.gapTop);
+      drawPodColumn(wave.x, wave.w, wave.gapTop + wave.gap, flight.h);
+      ctx.save();
+      ctx.fillStyle = "#c3ff62";
+      ctx.font = "700 13px Noto Sans Mono, ui-monospace, Menlo, monospace";
+      ctx.textAlign = "center";
+      ctx.fillText("rollout", wave.x + wave.w / 2, wave.gapTop - 8);
+      ctx.restore();
+    }
+
+    function drawPodColumn(x, w, y0, y1) {
+      const tileW = w - 10;
+      const tileH = 34;
+      const left = x + 5;
+      let n = 0;
+      for (let y = y0 + 10; y + tileH < y1 - 6; y += tileH + 10) {
+        const fresh = (n + Math.floor(performance.now() / 450)) % 2 === 0;
+        n++;
+        ctx.save();
+        ctx.globalAlpha = fresh ? 1 : 0.55;
+        ctx.fillStyle = fresh ? "#326ce5" : "#2a3148";
+        roundRect(left, y, tileW, tileH, 7);
+        ctx.fill();
+        ctx.strokeStyle = fresh ? "#dce8ff" : "#8d97b3";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = "#f8fafc";
+        ctx.font = "700 11px Noto Sans Mono, ui-monospace, Menlo, monospace";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(fresh ? "new pod" : "stopping", left + tileW / 2, y + tileH / 2);
+        ctx.restore();
+      }
+    }
+
+    function drawEnemy(hazard) {
+      const s = hazard.size;
+      ctx.save();
+      ctx.translate(hazard.x, hazard.y);
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      if (hazard.kind === "crashloop") {
+        const blink = Math.sin(hazard.pulse * 10) > 0;
+        ctx.fillStyle = blink ? "#ff7a18" : "#8a3b12";
+        roundRect(-s * 0.62, -s * 0.42, s * 1.24, s * 0.84, 8);
+        ctx.fill();
+        ctx.fillStyle = blink ? "#ffd7b0" : "#444";
+        ctx.beginPath();
+        ctx.arc(s * 0.38, -s * 0.16, 4, 0, Math.PI * 2);
+        ctx.fill();
+        labelEnemy("LOOP", s);
+      } else if (hazard.kind === "evict") {
+        ctx.fillStyle = "#f3c14e";
+        ctx.beginPath();
+        ctx.moveTo(0, -s * 0.62);
+        ctx.lineTo(s * 0.66, s * 0.5);
+        ctx.lineTo(-s * 0.66, s * 0.5);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = "#141414";
+        ctx.font = "800 18px Arial Black, Impact, sans-serif";
+        ctx.fillText("!", 0, s * 0.16);
+        labelEnemy("EVICT", s, s * 0.78);
+      } else if (hazard.kind === "pull") {
+        ctx.fillStyle = "#6d28d9";
+        roundRect(-s * 0.58, -s * 0.5, s * 1.16, s * 1.0, 4);
+        ctx.fill();
+        ctx.strokeStyle = "#ddd6fe";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(0, -s * 0.22);
+        ctx.lineTo(0, s * 0.16);
+        ctx.moveTo(-6, s * 0.02);
+        ctx.lineTo(0, s * 0.16);
+        ctx.lineTo(6, s * 0.02);
+        ctx.stroke();
+        labelEnemy("PULL", s, s * 0.72);
+      } else {
+        ctx.shadowColor = "#ff496c";
+        ctx.shadowBlur = 10;
+        ctx.fillStyle = "#b5163b";
+        roundRect(-s * 0.58, -s * 0.46, s * 1.16, s * 0.92, 6);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        labelEnemy("OOM", s);
+      }
+      ctx.restore();
+    }
+
+    function labelEnemy(text, size, y) {
+      ctx.font = "700 16px Noto Sans Mono, ui-monospace, Menlo, monospace";
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = "#141414";
+      ctx.strokeText(text, 0, y || 1);
+      ctx.fillStyle = "#fff";
+      ctx.fillText(text, 0, y || 1);
+    }
+
+    function drawRocketEngine(x, y, radius, flameScale) {
+      ctx.fillStyle = "#326ce5";
+      ctx.beginPath();
+      for (let i = 0; i < 6; i++) {
+        const a = Math.PI / 3 * i;
+        const px = x + Math.cos(a) * radius;
+        const py = y + Math.sin(a) * radius;
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = "#dce8ff";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      drawKubeWheel(x, y, radius * 0.53);
+
+      const flicker = 0.82 + Math.sin(performance.now() / 55 + y) * 0.16;
+      const root = x - radius * 0.86;
+      const flame = radius * flameScale * flicker;
+      ctx.fillStyle = "#64d8ff";
+      ctx.beginPath();
+      ctx.moveTo(root, y - radius * 0.44);
+      ctx.lineTo(root - flame, y);
+      ctx.lineTo(root, y + radius * 0.44);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    function drawPod() {
+      const { x, y, r, vy } = flight.pod;
+      ctx.save();
+      ctx.translate(x, y);
+      const tilt = Math.max(-0.6, Math.min(0.7, vy / 700));
+      ctx.rotate(tilt);
+      if (flight.invuln > 0 && Math.floor(flight.invuln * 12) % 2 === 0) ctx.globalAlpha = 0.45;
+
+      // One engine becomes a three-rocket booster pack in the back half.
+      const deployed = flight.mode === "attract" ? 0 : flight.boosterDeploy;
+      if (deployed > 0) {
+        const sideR = r * 0.48 * deployed;
+        const sideY = r * (0.38 + deployed * 0.48);
+        drawRocketEngine(-r * 1.3, -sideY, sideR, 1.35);
+        drawRocketEngine(-r * 1.3, sideY, sideR, 1.35);
+      }
+      drawRocketEngine(-r * 1.48, 0, r * 0.72, flight.boosters ? 1.55 : 1.05);
+
+      ctx.fillStyle = "#444ce7";
+      roundRect(-r * 1.15, -r * 0.78, r * 3.05, r * 1.56, r * 0.35);
+      ctx.fill();
+      ctx.strokeStyle = "#9da4ff";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      drawZiggy(r, true);
+      ctx.strokeStyle = "#64d8ff";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(r * 0.82, -r * 0.06, r * 0.66, 0, Math.PI * 2);
+      ctx.stroke();
+
+      if (flight.respawnFlash > 0) {
+        ctx.strokeStyle = `rgba(100,216,255,${flight.respawnFlash})`;
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.arc(0, 0, r * (3.2 - flight.respawnFlash), 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    function ziggyBlink() {
+      const t = (performance.now() / 1000) % 10;
+      return (t >= 0.9 && t < 1.04) || (t >= 7.6 && t < 7.74) || (t >= 8 && t < 8.14);
+    }
+
+    function ziggyArt() {
+      if (!reduce && ziggyBlink() && ziggyShut.complete && ziggyShut.naturalWidth) return ziggyShut;
+      return ziggyOpen;
+    }
+
+    function drawZiggy(r, masked) {
+      const img = ziggyArt();
+      if (!img.complete || !img.naturalWidth) return;
+      const scale = (r * 1.05) / 420;
+      const w = img.naturalWidth * scale;
+      const h = img.naturalHeight * scale;
+      const cx = r * 0.82;
+      const cy = -r * 0.06;
+      ctx.save();
+      if (masked) {
+        ctx.beginPath();
+        ctx.arc(cx, cy, r * 0.62, 0, Math.PI * 2);
+        ctx.clip();
+        ctx.fillStyle = "#dff8ff";
+        ctx.fill();
+      }
+      ctx.drawImage(img, cx - 360 * scale, cy - 155 * scale, w, h);
+      ctx.restore();
+    }
+
+    function drawScoreZiggy() {
+      const img = ziggyArt();
+      if (!img.complete || !img.naturalWidth) return;
+      const size = Math.min(flight.w * 0.92, flight.h * 1.05);
+      const headX = 390 / img.naturalWidth;
+      const headY = 200 / img.naturalHeight;
+      const x = flight.w * 0.62 - headX * size;
+      const y = flight.h * 0.2 - headY * size;
+      ctx.drawImage(img, x, y, size, size);
+    }
+
+    function drawKubeWheel(x, y, r) {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.strokeStyle = "#fff";
+      ctx.fillStyle = "#fff";
+      ctx.lineWidth = Math.max(1.5, r * 0.16);
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.42, 0, Math.PI * 2);
+      ctx.stroke();
+      for (let i = 0; i < 7; i++) {
+        const a = i * Math.PI * 2 / 7;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(a) * r * 0.38, Math.sin(a) * r * 0.38);
+        ctx.lineTo(Math.cos(a) * r * 0.83, Math.sin(a) * r * 0.83);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(Math.cos(a) * r * 0.92, Math.sin(a) * r * 0.92, r * 0.13, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    function drawWreck() {
+      for (const bit of flight.debris) {
+        ctx.save();
+        ctx.translate(bit.x, bit.y);
+        ctx.rotate(bit.angle);
+        ctx.fillStyle = bit.color;
+        ctx.fillRect(-bit.size, -bit.size * 0.38, bit.size * 2, bit.size * 0.76);
+        ctx.restore();
+      }
+      ctx.save();
+      ctx.translate(flight.pod.x, flight.pod.y);
+      ctx.rotate(Math.max(-0.4, Math.min(0.4, flight.pod.vy / 900)));
+      drawZiggy(flight.pod.r, false);
+      ctx.restore();
+    }
+    function roundRect(x, y, w, h, rad) {
+      ctx.beginPath();
+      ctx.moveTo(x + rad, y);
+      ctx.arcTo(x + w, y, x + w, y + h, rad);
+      ctx.arcTo(x + w, y + h, x, y + h, rad);
+      ctx.arcTo(x, y + h, x, y, rad);
+      ctx.arcTo(x, y, x + w, y, rad);
+      ctx.closePath();
+    }
+
+    let audioCtx;
+    function blip(freq, dur, type) {
+      if (reduce) return;
+      try {
+        if (!audioCtx) audioCtx = new AudioContext();
+        const o = audioCtx.createOscillator();
+        const g = audioCtx.createGain();
+        o.type = type;
+        o.frequency.value = freq;
+        g.gain.value = 0.045;
+        g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+        o.connect(g);
+        g.connect(audioCtx.destination);
+        o.start();
+        o.stop(audioCtx.currentTime + dur);
+      } catch (e) { /* sound is optional */ }
+    }
+
+    let bed;
+    function ensureAudio() {
+      if (!audioCtx) audioCtx = new AudioContext();
+      if (audioCtx.state === "suspended") audioCtx.resume();
+      return audioCtx;
+    }
+
+    function startBed() {
+      try {
+        if (bed) return;
+        const ctx = ensureAudio();
+        const audio = new Audio("/assets/outer-space.mp3");
+        audio.loop = true;
+        const source = ctx.createMediaElementSource(audio);
+        const master = ctx.createGain();
+        master.gain.value = 0;
+        source.connect(master);
+        master.connect(ctx.destination);
+        const now = ctx.currentTime;
+        master.gain.setValueAtTime(0, now);
+        master.gain.linearRampToValueAtTime(0.16, now + 1.8);
+        audio.play();
+        bed = { audio, master, lifted: false };
+      } catch (e) { /* sound is optional */ }
+    }
+
+    function liftBed() {
+      if (!bed || !audioCtx || bed.lifted) return;
+      bed.lifted = true;
+      const now = audioCtx.currentTime;
+      bed.master.gain.cancelScheduledValues(now);
+      bed.master.gain.linearRampToValueAtTime(0.22, now + 0.8);
+    }
+
+    function stopBed() {
+      if (!bed || !audioCtx) return;
+      const current = bed;
+      bed = null;
+      const now = audioCtx.currentTime;
+      current.master.gain.cancelScheduledValues(now);
+      current.master.gain.setValueAtTime(current.master.gain.value, now);
+      current.master.gain.linearRampToValueAtTime(0, now + 0.9);
+      setTimeout(() => current.audio.pause(), 1000);
+    }
+
+    function paintClock() {
+      const left = flight.deadline ? Math.max(0, (flight.deadline - Date.now()) / 1000) : flight.duration;
+      const total = (flight.duration || 60) + flight.treats * (meta.treatSeconds || 8);
+      if (flight.treatFlash > 0) flight.treatFlash -= 0.016;
+      const bar = document.querySelector("#clockbar");
+      const clock = document.querySelector("#clock");
+      bar.style.width = Math.max(0, Math.min(1, left / total)) * 100 + "%";
+      const m = Math.floor(left / 60);
+      const s = Math.floor(left % 60);
+      document.querySelector("#time").textContent = m + ":" + String(s).padStart(2, "0");
+      clock.classList.toggle("low", left <= 10 && flight.mode !== "attract");
+      const time = document.querySelector("#time");
+      time.classList.toggle("low-time", left <= 10 && flight.mode !== "attract" && flight.treatFlash <= 0);
+      time.style.color = flight.treatFlash > 0 ? "#c3ff62" : "";
+    }
+
+    let last = performance.now();
+    function frame(now) {
+      const dt = Math.min(0.033, (now - last) / 1000);
+      last = now;
+      step(dt);
+      draw();
+      paintClock();
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+
+    async function pollSession() {
+      if (!flight.sessionId || flight.mode === "done" || flight.mode === "attract") return;
+      const id = flight.sessionId;
+      try {
+        const res = await fetch("/api/sessions/" + id);
+        if (flight.sessionId !== id || flight.mode === "attract") return;
+        if (res.status === 503) {
+          if (flight.mode === "flying") {
+            flight.mode = "frozen";
+            document.querySelector("#stamp").classList.remove("hidden");
+          }
+          return;
+        }
+        if (!res.ok) return;
+        const s = await res.json();
+        if (flight.sessionId !== id || flight.mode === "attract") return;
+        if (s.deadline) {
+          const next = Date.parse(s.deadline);
+          if (!flight.deadline || next > flight.deadline) flight.deadline = next;
+        }
+        if (typeof s.treats === "number") flight.treats = Math.max(flight.treats, s.treats);
+        if (s.workerPod) {
+          flight.worker = s.workerPod;
+          document.querySelector("#worker").textContent = s.workerPod;
+        }
+        if (flight.mode === "frozen" && !flight.standbyRescue && !flight.crashAccepted && s.phase === "playing" && s.crashes === flight.crashes) {
+          postCrash();
+        }
+        if (s.phase === "recovering" && flight.mode === "flying") {
+          flight.mode = "frozen";
+          document.querySelector("#stamp").classList.remove("hidden");
+        }
+        if (s.phase === "playing" && flight.mode === "frozen" && s.crashes > flight.crashes) {
+          flight.crashes = s.crashes;
+          flight.score = Math.max(flight.score, s.score);
+          flight.acked = s.score;
+          flight.crashAccepted = false;
+          flight.debris = [];
+          flight.respawnFlash = 1;
+          document.querySelector("#stamp").classList.add("hidden");
+          armCourse();
+          flight.mode = "flying";
+        }
+        if (s.finished || s.phase === "finished") finish(s);
+      } catch (e) { /* the clock still runs */ }
+    }
+
+    function finish(s) {
+      if (flight.mode === "done") return;
+      stopBed();
+      flight.mode = "done";
+      flight.score = s.score;
+      flight.crashes = s.crashes;
+      document.querySelector("#stamp").classList.add("hidden");
+      document.querySelector("#join").classList.add("hidden");
+      const box = document.querySelector("#result");
+      box.classList.remove("hidden");
+      document.querySelector("#final").textContent = String(s.score);
+      const newBest = flight.gamesPlayed === 0 || s.score > flight.personalBest;
+      document.querySelector("#best").textContent = newBest
+        ? "Best score yet!"
+        : "Your best: " + flight.personalBest;
+      const gates = s.score === 1 ? "gate" : "gates";
+      const hits = s.crashes === 1 ? "crash" : "crashes";
+      let copy = "You cleared " + s.score + " " + gates + " with " + s.crashes + " " + hits + ".";
+      if (meta.temporalUI && s.workflowId) {
+        const href = meta.temporalUI + "/namespaces/" + encodeURIComponent(meta.namespace || "default") + "/workflows/" + encodeURIComponent(s.workflowId);
+        copy += ' <a href="' + href + '">Open the workflow</a>';
+      }
+      document.querySelector("#finalcopy").innerHTML = copy;
+      document.querySelector("#board").classList.add("show");
+      let left = 8;
+      const tick = () => {
+        if (flight.mode !== "done") return;
+        document.querySelector("#again").textContent = "Next flight in " + left;
+        if (left <= 0) {
+          resetKiosk();
+          return;
+        }
+        left--;
+        flight.resetTimer = setTimeout(tick, 1000);
+      };
+      tick();
+    }
+
+    function resetKiosk() {
+      clearTimeout(flight.resetTimer);
+      flight.mode = "attract";
+      flight.sessionId = "";
+      flight.score = 0;
+      flight.acked = 0;
+      flight.crashes = 0;
+      flight.treats = 0;
+      flight.treat = null;
+      flight.perk = null;
+      flight.standby = false;
+      flight.standbyRescue = false;
+      flight.standbyLeft = 0;
+      flight.hazards = [];
+      flight.restartWave = null;
+      flight.bars = [];
+      flight.pops = [];
+      flight.debris = [];
+      flight.deadline = 0;
+      flight.treatFlash = 0;
+      flight.lived = 0;
+      flight.pressure = 0;
+      flight.restartCount = 0;
+      flight.boosters = false;
+      flight.boosterDeploy = 0;
+      flight.boosterFlash = 0;
+      flight.oomNext = 12;
+      document.querySelector("#stamp").classList.add("hidden");
+      document.querySelector("#result").classList.add("hidden");
+      document.querySelector("#worker").textContent = "";
+      document.querySelector("#err").textContent = "";
+      document.querySelector("#start").disabled = false;
+      document.querySelector("#name").value = "";
+      document.querySelector("#title").value = "";
+      document.querySelector("#email").value = "";
+      document.querySelector("#back").textContent = "";
+      document.querySelector("#consent").checked = false;
+      if (!boardOnly) document.querySelector("#join").classList.remove("hidden");
+      const seconds = meta.durationSeconds || 60;
+      document.querySelector("#time").textContent = Math.floor(seconds / 60) + ":" + String(seconds % 60).padStart(2, "0");
+      document.querySelector("#time").style.color = "";
+      document.querySelector("#clock").classList.remove("low");
+      document.querySelector("#clockbar").style.width = "100%";
+      placeShip();
+    }
+
+    async function pollBoard() {
+      try {
+        const res = await fetch("/api/leaderboard");
+        if (!res.ok) return;
+        const rows = await res.json();
+        const list = document.querySelector("#standings");
+        list.innerHTML = "";
+        if (!rows.length) {
+          const li = document.createElement("li");
+          li.className = "empty";
+          li.textContent = "No flights yet";
+          list.appendChild(li);
+          return;
+        }
+        rows.slice(0, 8).forEach((row, i) => {
+          const li = document.createElement("li");
+          li.innerHTML = "<span>" + (i + 1) + "</span><span class='who'></span><span class='pts'></span>";
+          li.children[1].textContent = row.name + (row.title ? "  " + row.title : "");
+          li.children[2].textContent = row.score;
+          list.appendChild(li);
+        });
+      } catch (e) { /* board is optional while flying */ }
+    }
+
+    let recallTimer = 0;
+    let recalled = { name: "", title: "" };
+    async function recallPlayer() {
+      const email = document.querySelector("#email").value.trim();
+      const note = document.querySelector("#back");
+      if (!email.includes("@") || !email.includes(".")) {
+        note.textContent = "";
+        return null;
+      }
+      try {
+        const res = await fetch("/api/players/lookup", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ email }),
+        });
+        if (!res.ok) return null;
+        const body = await res.json();
+        const name = document.querySelector("#name");
+        const title = document.querySelector("#title");
+        if (!body.known) {
+          if (name.value === recalled.name) name.value = "";
+          if (title.value === recalled.title) title.value = "";
+          recalled = { name: "", title: "" };
+          note.textContent = "";
+          return null;
+        }
+        if (!name.value.trim() || name.value === recalled.name) name.value = body.name;
+        if (!title.value.trim() || title.value === recalled.title) title.value = body.title;
+        recalled = { name: body.name, title: body.title };
+        note.textContent = "Welcome back, " + body.name + ". Email is enough to fly again.";
+        return body;
+      } catch (e) {
+        return null;
+      }
+    }
+    document.querySelector("#email").addEventListener("input", () => {
+      clearTimeout(recallTimer);
+      recallTimer = setTimeout(recallPlayer, 350);
+    });
+
+    document.querySelector("#join").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const err = document.querySelector("#err");
+      const btn = document.querySelector("#start");
+      err.textContent = "";
+      btn.disabled = true;
+      try {
+        if (!document.querySelector("#name").value.trim() || !document.querySelector("#title").value.trim()) {
+          await recallPlayer();
+        }
+        const res = await fetch("/api/play", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            name: document.querySelector("#name").value,
+            title: document.querySelector("#title").value,
+            email: document.querySelector("#email").value,
+            consent: document.querySelector("#consent").checked,
+          }),
+        });
+        const body = await res.json();
+        if (!res.ok) {
+          err.textContent = body.error || "The flight did not start.";
+          btn.disabled = false;
+          return;
+        }
+        const s = body.state;
+        flight.sessionId = body.sessionId;
+        flight.seed = parseInt(String(s.seed || body.sessionId).slice(0, 8), 16) >>> 0;
+        flight.score = 0;
+        flight.acked = 0;
+        flight.crashes = 0;
+        flight.personalBest = body.personalBest || 0;
+        flight.gamesPlayed = body.gamesPlayed || 0;
+        flight.oomCount = 0;
+        flight.oomNext = 12;
+        flight.lived = 0;
+        flight.pressure = 0;
+        flight.restartCount = 0;
+        flight.boosters = false;
+        flight.boosterDeploy = 0;
+        flight.boosterFlash = 0;
+        flight.treats = 0;
+        flight.treat = null;
+        flight.perk = null;
+        flight.standby = false;
+        flight.standbyRescue = false;
+        flight.standbyLeft = 0;
+        flight.pops = [];
+        flight.restartWave = null;
+        flight.restartDone = false;
+        flight.duration = meta.durationSeconds || 60;
+        if (s.deadline) flight.deadline = Date.parse(s.deadline);
+        if (s.workerPod) {
+          flight.worker = s.workerPod;
+          document.querySelector("#worker").textContent = s.workerPod;
+        }
+        document.querySelector("#join").classList.add("hidden");
+        flight.mode = "flying";
+        armCourse();
+        startBed();
+      } catch (e) {
+        err.textContent = "The booth could not reach the game.";
+        btn.disabled = false;
+      }
+    });
+
+    async function boot() {
+      try {
+        const res = await fetch("/api/meta");
+        if (res.ok) meta = await res.json();
+      } catch (e) { /* defaults keep the clock honest */ }
+      flight.duration = meta.durationSeconds || 60;
+      const m = Math.floor(flight.duration / 60);
+      const s = Math.floor(flight.duration % 60);
+      document.querySelector("#time").textContent = m + ":" + String(s).padStart(2, "0");
+      if (boardOnly) {
+        document.querySelector("#join").classList.add("hidden");
+        document.querySelector("#board").classList.add("show");
+        document.querySelector("#board").style.left = "28px";
+        document.querySelector("#board").style.right = "28px";
+        document.querySelector("#board").style.top = "78px";
+        document.querySelector("#board").style.bottom = "auto";
+        document.querySelector("#board").style.width = "auto";
+      }
+      pollBoard();
+      setInterval(pollBoard, 2000);
+      setInterval(pollSession, 400);
+    }
+    boot();
+  </script>
+</body>
+</html>

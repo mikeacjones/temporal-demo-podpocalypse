@@ -1,0 +1,32 @@
+services:
+  temporal:
+    image: temporalio/temporal:1.5.1
+    command:
+      - server
+      - start-dev
+      - --ip
+      - 0.0.0.0
+      - --port
+      - "7233"
+      - --ui-port
+      - "8233"
+    ports:
+      - "7233:7233"
+      - "8233:8233"
+  booth:
+    image: podpocalypse:dev
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_NAMESPACE: default
+      TEMPORAL_UI_URL: http://localhost:8233
+      RUNTIME: process
+      HTTP_ADDR: ":8080"
+      LEAD_PATH: /data/leads.jsonl
+    ports:
+      - "8080:8080"
+    volumes:
+      - leads:/data
+    depends_on:
+      - temporal
+volumes:
+  leads: {}

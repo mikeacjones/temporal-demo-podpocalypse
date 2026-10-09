@@ -1,0 +1,51 @@
+# Point the booth at Temporal Cloud instead of the in-cluster dev server.
+# Do not apply this together with deploy/k8s/booth.yaml; it replaces that
+# container's environment. Create the secret first:
+#
+#   kubectl -n podpocalypse create secret generic temporal-cloud \
+#     --from-literal=api-key=YOUR_KEY
+#
+# Then delete the temporal-dev deployment and apply this file, or merge the
+# env block into the booth deployment by hand.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: booth
+  namespace: podpocalypse
+spec:
+  template:
+    spec:
+      containers:
+        - name: booth
+          env:
+            - name: ROLE
+              value: booth
+            - name: HTTP_ADDR
+              value: ":8080"
+            - name: RUNTIME
+              value: kubernetes
+            - name: TEMPORAL_ADDRESS
+              value: YOUR_NAMESPACE.tmprl.cloud:7233
+            - name: TEMPORAL_NAMESPACE
+              value: YOUR_NAMESPACE
+            - name: TEMPORAL_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: temporal-cloud
+                  key: api-key
+            - name: TEMPORAL_UI_URL
+              value: https://cloud.temporal.io
+            - name: SESSION_IMAGE
+              value: YOUR_REGISTRY/podpocalypse:dev
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: LEAD_PATH
+              value: /data/leads.jsonl
+          volumeMounts:
+            - name: leads
+              mountPath: /data
+      volumes:
+        - name: leads
+          emptyDir: {}

@@ -1,0 +1,5 @@
+bin/
+/podpocalypse
+*.db
+leads.jsonl
+.DS_Store

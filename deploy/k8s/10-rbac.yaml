@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: booth
+  namespace: podpocalypse
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: booth
+  namespace: podpocalypse
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: booth
+  namespace: podpocalypse
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: booth
+subjects:
+  - kind: ServiceAccount
+    name: booth
+    namespace: podpocalypse
