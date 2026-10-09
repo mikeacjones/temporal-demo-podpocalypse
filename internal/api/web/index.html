@@ -152,6 +152,8 @@
     #again { color: #f8fafc; font-size: clamp(22px, 3vw, 32px); margin-top: 22px; }
 
     .hidden { display: none !important; }
+    #boothqr { display: block; width: 220px; height: 220px; margin: 12px auto; background: #fff; }
+    #boothname { text-align: center; }
     @media (max-width: 720px) {
       .dock { left: 12px; right: 12px; top: auto; bottom: 12px; width: auto; }
       .result { width: min(560px, calc(100vw - 24px)); padding: 28px 22px 24px; }
@@ -172,7 +174,16 @@
 
   <form class="dock" id="join">
     <h1>Kill the worker</h1>
-    <p>Fly Ziggy's pod-ship through the cluster. Tap to climb. A wreck deletes the worker running your flight. The clock does not stop while Kubernetes schedules a replacement.</p>
+    <p id="pitch">Fly Ziggy's pod-ship through the cluster. Tap to climb. A wreck deletes the worker running your flight. The clock does not stop while Kubernetes schedules a replacement.</p>
+    <div id="booth" class="hidden">
+      <img id="boothqr" alt="Scan to join this event" width="220" height="220">
+      <p id="boothname"></p>
+      <label><span>Flight code</span><input id="code" name="code" type="text" maxlength="8" autocapitalize="characters" autocomplete="off" spellcheck="false"></label>
+    </div>
+    <div id="checkin" class="hidden">
+      <label><span>Event</span><select id="events"></select></label>
+      <button class="go" id="checkin-go" type="button">Open this event</button>
+    </div>
     <label><span>Email</span><input id="email" name="email" type="email" autocomplete="email" required maxlength="120"></label>
     <p class="back" id="back"></p>
     <label><span>Name</span><input id="name" name="name" type="text" autocomplete="name" maxlength="80"></label>
@@ -372,7 +383,7 @@
         document.querySelector("#waitcopy").textContent = "A warm pod is already waiting. Redeploying…";
         return;
       }
-      document.querySelector("#waitcopy").textContent = "Waiting for the Kubernetes scheduler… the clock is still running.";
+      document.querySelector("#waitcopy").textContent = recoveryCopy();
       postCrash();
     }
 
@@ -388,7 +399,7 @@
       flight.standbyRescue = false;
       flight.standbyLeft = 0;
       document.querySelector("#stamp").classList.add("hidden");
-      document.querySelector("#waitcopy").textContent = "Waiting for the Kubernetes scheduler… the clock is still running.";
+      document.querySelector("#waitcopy").textContent = recoveryCopy();
       blip(680, 0.12, "square");
     }
 
@@ -1585,6 +1596,11 @@
       recallTimer = setTimeout(recallPlayer, 350);
     });
 
+    function recoveryCopy() {
+      if (meta.runtime === "process") return "Waiting for a new worker process… the clock is still running.";
+      return "Waiting for the Kubernetes scheduler… the clock is still running.";
+    }
+    function codeMode() { return !document.querySelector("#booth").classList.contains("hidden"); }
     document.querySelector("#join").addEventListener("submit", async (ev) => {
       ev.preventDefault();
       const err = document.querySelector("#err");
@@ -1592,18 +1608,24 @@
       err.textContent = "";
       btn.disabled = true;
       try {
-        if (!document.querySelector("#name").value.trim() || !document.querySelector("#title").value.trim()) {
-          await recallPlayer();
-        }
-        const res = await fetch("/api/play", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
+        let payload;
+        if (codeMode()) {
+          payload = { flightCode: document.querySelector("#code").value.trim() };
+        } else {
+          if (!document.querySelector("#name").value.trim() || !document.querySelector("#title").value.trim()) {
+            await recallPlayer();
+          }
+          payload = {
             name: document.querySelector("#name").value,
             title: document.querySelector("#title").value,
             email: document.querySelector("#email").value,
             consent: document.querySelector("#consent").checked,
-          }),
+          };
+        }
+        const res = await fetch("/api/play", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload),
         });
         const body = await res.json();
         if (!res.ok) {
@@ -1670,10 +1692,59 @@
         document.querySelector("#board").style.bottom = "auto";
         document.querySelector("#board").style.width = "auto";
       }
+      try {
+        const boothRes = await fetch("/api/kiosk");
+        if (boothRes.ok) await prepareBooth(await boothRes.json());
+      } catch (e) { /* the local form still starts a flight */ }
       pollBoard();
       setInterval(pollBoard, 2000);
       setInterval(pollSession, 400);
     }
+    async function prepareBooth(booth) {
+      if (booth.eventId) {
+        document.querySelector("#booth").classList.remove("hidden");
+        document.querySelector("#boothname").textContent = booth.eventName || booth.eventId;
+        if (booth.qrURL) document.querySelector("#boothqr").src = booth.qrURL;
+        else document.querySelector("#boothqr").classList.add("hidden");
+        document.querySelector("#pitch").textContent = "Scan the code, finish the form on your phone, then enter the flight code.";
+        for (const id of ["email", "name", "title", "consent"]) {
+          document.querySelector("#" + id).closest("label").classList.add("hidden");
+        }
+        document.querySelector("#email").required = false;
+        document.querySelector("#back").classList.add("hidden");
+        return;
+      }
+      if (!booth.employee) return;
+      const res = await fetch("/api/kiosk/events");
+      if (!res.ok) return;
+      const events = await res.json();
+      const select = document.querySelector("#events");
+      select.innerHTML = "";
+      events.forEach((event) => {
+        const option = document.createElement("option");
+        option.value = event.id;
+        option.textContent = event.name || event.id;
+        select.appendChild(option);
+      });
+      if (!events.length) return;
+      document.querySelector("#checkin").classList.remove("hidden");
+      document.querySelector("#pitch").textContent = "Check the booth into an event. Players scan that event's code and bring the flight code back here.";
+    }
+    document.querySelector("#checkin-go").addEventListener("click", async () => {
+      const err = document.querySelector("#err");
+      err.textContent = "";
+      const res = await fetch("/api/kiosk/bind", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ eventId: document.querySelector("#events").value }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        err.textContent = body.error || "Could not open that event.";
+        return;
+      }
+      location.reload();
+    });
     boot();
   </script>
 </body>

@@ -102,6 +102,10 @@ func runBooth(c client.Client, cfg config.Config) error {
 	w.RegisterWorkflow(workflows.GameRunWorkflow)
 	w.RegisterWorkflow(workflows.LeaderboardWorkflow)
 	w.RegisterWorkflow(workflows.PlayerWorkflow)
+	w.RegisterWorkflow(workflows.KioskWorkflow)
+	w.RegisterWorkflow(workflows.ListLeadEvents)
+	w.RegisterWorkflow(workflows.GetLeadEvent)
+	w.RegisterWorkflow(workflows.ClaimFlight)
 	w.RegisterActivity(acts)
 
 	interrupt := worker.InterruptCh()

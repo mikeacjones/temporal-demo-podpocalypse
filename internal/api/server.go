@@ -32,12 +32,16 @@ type PlayRequest struct {
 	Email           string `json:"email"`
 	Consent         bool   `json:"consent"`
 	DurationSeconds int    `json:"durationSeconds"`
+	FlightCode      string `json:"flightCode"`
 }
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.HandleFunc("GET /api/meta", s.meta)
+	mux.HandleFunc("GET /api/kiosk", s.kiosk)
+	mux.HandleFunc("GET /api/kiosk/events", s.kioskEvents)
+	mux.HandleFunc("POST /api/kiosk/bind", s.kioskBind)
 	mux.HandleFunc("POST /api/play", s.play)
 	mux.HandleFunc("POST /api/players/lookup", s.lookupPlayer)
 	mux.HandleFunc("GET /api/sessions/{id}", s.session)
@@ -118,6 +122,8 @@ func (s *Server) meta(w http.ResponseWriter, _ *http.Request) {
 		"minGateMs":       int(game.MinGateInterval / time.Millisecond),
 		"treatSeconds":    int(game.TreatBonus / time.Second),
 		"maxTreats":       game.MaxTreats,
+		"runtime":         s.Config.Runtime,
+		"leads":           s.Config.LeadsEndpoint != "",
 	})
 }
 
@@ -130,6 +136,20 @@ func (s *Server) play(w http.ResponseWriter, r *http.Request) {
 	req.Name = strings.TrimSpace(req.Name)
 	req.Title = strings.TrimSpace(req.Title)
 	req.Email = strings.TrimSpace(req.Email)
+	req.FlightCode = strings.TrimSpace(req.FlightCode)
+	if req.FlightCode != "" {
+		claimCtx, claimCancel := context.WithTimeout(r.Context(), 20*time.Second)
+		profile, err := s.claimFlight(claimCtx, req.FlightCode)
+		claimCancel()
+		if err != nil {
+			writeFlightErr(w, err)
+			return
+		}
+		req.Name = profile.Name
+		req.Title = profile.Role
+		req.Email = profile.Email
+		req.Consent = true
+	}
 	if !validEmail(req.Email) {
 		writeErr(w, http.StatusBadRequest, "email is required")
 		return

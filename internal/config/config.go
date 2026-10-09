@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"podpocalypse/internal/game"
@@ -37,6 +38,10 @@ type Config struct {
 	LeadPath          string
 	AdminToken        string
 	PodName           string
+	AuthVerifyURL     string
+	PublicURL         string
+	LeadsEndpoint     string
+	LeadsURL          string
 }
 
 func FromEnv() (Config, error) {
@@ -61,6 +66,10 @@ func FromEnv() (Config, error) {
 		LeadPath:          os.Getenv("LEAD_PATH"),
 		AdminToken:        os.Getenv("ADMIN_TOKEN"),
 		PodName:           env("POD_NAME", ""),
+		AuthVerifyURL:     os.Getenv("AUTH_VERIFY_URL"),
+		PublicURL:         os.Getenv("PUBLIC_URL"),
+		LeadsEndpoint:     os.Getenv("EVENT_LEADS_ENDPOINT"),
+		LeadsURL:          strings.TrimRight(os.Getenv("EVENT_LEADS_URL"), "/"),
 	}
 	if v := os.Getenv("RECOVERY_DELAY"); v != "" {
 		d, err := time.ParseDuration(v)

@@ -11,7 +11,10 @@ import (
 	"strings"
 )
 
-const LeaderboardWorkflowID = "leaderboard"
+const (
+	LeaderboardWorkflowID = "leaderboard"
+	KioskWorkflowID       = "kiosk"
+)
 
 var sessionIDPattern = regexp.MustCompile(`^[a-f0-9]{8}$`)
 
