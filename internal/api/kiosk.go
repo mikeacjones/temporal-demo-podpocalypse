@@ -20,20 +20,46 @@ import (
 )
 
 func (s *Server) kiosk(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-	defer cancel()
-	state, err := s.boothState(ctx)
-	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"employee": false})
-		return
-	}
 	employee, _ := s.employee(r)
+	// The open booth is not an event. An event page asks for that event itself.
 	writeJSON(w, http.StatusOK, map[string]any{
 		"employee":  employee != "",
-		"eventId":   state.EventID,
-		"eventName": state.EventName,
-		"formURL":   state.FormURL,
-		"qrURL":     state.QRURL,
+		"eventId":   "",
+		"eventName": "",
+		"formURL":   "",
+		"qrURL":     "",
+	})
+}
+
+func (s *Server) publicEvent(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" || s.Config.LeadsEndpoint == "" {
+		writeErr(w, http.StatusNotFound, "no such event")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	token, err := names.NewSessionID()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not open that event")
+		return
+	}
+	var event workflows.LeadEvent
+	if err := s.finishWorkflow(ctx, "lead-get-"+token, workflows.GetLeadEvent, &event, s.Config.LeadsEndpoint, id); err != nil {
+		writeErr(w, http.StatusNotFound, "no such event")
+		return
+	}
+	if event.ID == "" {
+		writeErr(w, http.StatusNotFound, "no such event")
+		return
+	}
+	form, qr := "", ""
+	if s.Config.LeadsURL != "" {
+		form = s.Config.LeadsURL + "/events/" + url.PathEscape(event.ID)
+		qr = form + "/qr.png"
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id": event.ID, "name": event.Name, "status": event.Status, "formURL": form, "qrURL": qr,
 	})
 }
 
@@ -126,22 +152,19 @@ func (s *Server) kioskBind(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, state)
 }
 
-func (s *Server) claimFlight(ctx context.Context, code string) (workflows.FlightProfile, error) {
+func (s *Server) claimFlight(ctx context.Context, eventID, code string) (workflows.FlightProfile, error) {
 	var profile workflows.FlightProfile
+	eventID = strings.TrimSpace(eventID)
 	if s.Config.LeadsEndpoint == "" {
 		return profile, errors.New("this booth is not connected to the event tracker")
 	}
-	booth, err := s.boothState(ctx)
-	if err != nil {
-		return profile, err
+	if eventID == "" {
+		return profile, errors.New("this flight code belongs on an event page")
 	}
-	if booth.EventID == "" {
-		return profile, errors.New("the booth is not checked into an event")
-	}
-	code = strings.ToUpper(strings.TrimSpace(code))
-	runID := "flight-claim/" + booth.EventID + "/" + code
-	err = s.finishWorkflow(ctx, runID, workflows.ClaimFlight, &profile, workflows.ClaimFlightInput{
-		Endpoint: s.Config.LeadsEndpoint, EventID: booth.EventID, Code: code,
+	code = strings.TrimSpace(code)
+	runID := "flight-claim/" + eventID + "/" + code
+	err := s.finishWorkflow(ctx, runID, workflows.ClaimFlight, &profile, workflows.ClaimFlightInput{
+		Endpoint: s.Config.LeadsEndpoint, EventID: eventID, Code: code,
 	})
 	if temporal.IsWorkflowExecutionAlreadyStartedError(err) {
 		err = s.Client.GetWorkflow(ctx, runID, "").Get(ctx, &profile)

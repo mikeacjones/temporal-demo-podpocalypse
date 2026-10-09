@@ -33,12 +33,14 @@ type PlayRequest struct {
 	Consent         bool   `json:"consent"`
 	DurationSeconds int    `json:"durationSeconds"`
 	FlightCode      string `json:"flightCode"`
+	EventID         string `json:"eventId"`
 }
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.HandleFunc("GET /api/meta", s.meta)
+	mux.HandleFunc("GET /api/events/{id}", s.publicEvent)
 	mux.HandleFunc("GET /api/kiosk", s.kiosk)
 	mux.HandleFunc("GET /api/kiosk/events", s.kioskEvents)
 	mux.HandleFunc("POST /api/kiosk/bind", s.kioskBind)
@@ -139,7 +141,7 @@ func (s *Server) play(w http.ResponseWriter, r *http.Request) {
 	req.FlightCode = strings.TrimSpace(req.FlightCode)
 	if req.FlightCode != "" {
 		claimCtx, claimCancel := context.WithTimeout(r.Context(), 20*time.Second)
-		profile, err := s.claimFlight(claimCtx, req.FlightCode)
+		profile, err := s.claimFlight(claimCtx, req.EventID, req.FlightCode)
 		claimCancel()
 		if err != nil {
 			writeFlightErr(w, err)
