@@ -19,7 +19,7 @@
       --focus: #64d8ff;
     }
     * { box-sizing: border-box; }
-    html, body { margin: 0; height: 100%; background: var(--shaft); color: var(--ink); overflow: hidden; }
+    html, body { margin: 0; width: 100%; height: 100%; height: 100dvh; background: var(--shaft); color: var(--ink); overflow: hidden; }
     body { font-family: "Avenir Next", "Segoe UI", sans-serif; }
     canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
     button { font: inherit; cursor: pointer; }
@@ -155,12 +155,64 @@
     #boothqr { display: block; width: 220px; height: 220px; margin: 12px auto; background: #fff; }
     #boothname { text-align: center; }
     @media (max-width: 720px) {
-      .dock { left: 12px; right: 12px; top: auto; bottom: 12px; width: auto; }
-      .result { width: min(560px, calc(100vw - 24px)); padding: 28px 22px 24px; }
+      .dock {
+        left: max(8px, env(safe-area-inset-left));
+        right: max(8px, env(safe-area-inset-right));
+        top: max(54px, calc(env(safe-area-inset-top) + 40px));
+        bottom: max(8px, env(safe-area-inset-bottom));
+        width: auto;
+        max-height: none;
+        padding: 16px 18px 14px;
+        overflow-x: hidden;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        -webkit-overflow-scrolling: touch;
+      }
+      .dock p { margin-bottom: 12px; font-size: 14px; line-height: 1.3; }
+      .dock label { margin-bottom: 10px; }
+      .dock label span { margin-bottom: 3px; font-size: 12px; }
+      .dock input:not([type="checkbox"]) { padding: 4px 0 6px; font-size: 18px; }
+      .consent { margin-bottom: 12px; }
+      .go { min-height: 48px; padding: 11px 20px; }
+      #boothqr {
+        width: min(46vw, 180px);
+        height: min(46vw, 180px);
+        margin: 8px auto;
+      }
+      .result {
+        width: calc(100vw - 24px);
+        max-height: calc(100dvh - 32px);
+        padding: 24px 18px 20px;
+        overflow-y: auto;
+      }
       .board { display: none; }
       .board.show { display: block; left: 12px; right: 12px; width: auto; bottom: 12px; }
-      .time { font-size: 32px; top: 16px; right: 12px; }
-      h1 { font-size: 36px; }
+      .time {
+        top: max(14px, env(safe-area-inset-top));
+        right: max(12px, env(safe-area-inset-right));
+        font-size: 30px;
+      }
+      .worker { display: none; }
+      .stamp {
+        width: calc(100vw - 28px);
+        padding: 8px 10px 12px;
+        border-width: 4px;
+        font-size: clamp(36px, 13vw, 58px);
+      }
+      .stamp small { font-size: 15px; line-height: 1.2; }
+      h1 { font-size: 34px; }
+    }
+    @media (max-width: 720px) and (orientation: landscape) {
+      .dock {
+        left: max(12px, env(safe-area-inset-left));
+        right: auto;
+        top: max(18px, env(safe-area-inset-top));
+        bottom: max(8px, env(safe-area-inset-bottom));
+        width: min(390px, 52vw);
+      }
+      .dock p { display: none; }
+      #boothqr { width: 112px; height: 112px; }
+      .result { width: min(560px, calc(100vw - 32px)); }
     }
     @media (prefers-reduced-motion: reduce) {
       .stamp { transform: translate(-50%, -50%); }
@@ -295,9 +347,12 @@
       return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
     }
     function gapSize() { return flight.h * 0.38; }
-    function barW() { return Math.max(108, flight.w * 0.09); }
+    function isPhone() { return flight.w <= 720; }
+    function barW() { return isPhone() ? Math.max(76, flight.w * 0.22) : Math.max(108, flight.w * 0.09); }
     function pressure() { return flight.pressure || 0; }
-    function spacing() { return flight.w * (0.46 - pressure() * 0.1); }
+    function spacing() {
+      return flight.w * (isPhone() ? 0.72 - pressure() * 0.12 : 0.46 - pressure() * 0.1);
+    }
     function scrollSpeed() {
       const stage = flight.solar ? 0.09 : (flight.boosters ? 0.03 : 0);
       return flight.w * (0.2 + pressure() * 0.05 + stage);
