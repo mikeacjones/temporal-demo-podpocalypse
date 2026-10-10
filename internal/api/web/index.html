@@ -154,7 +154,7 @@
     .hidden { display: none !important; }
     #boothqr { display: block; width: 220px; height: 220px; margin: 12px auto; background: #fff; }
     #boothname { text-align: center; }
-    @media (max-width: 720px) {
+    @media (max-width: 720px), (max-height: 520px) {
       .dock {
         left: max(8px, env(safe-area-inset-left));
         right: max(8px, env(safe-area-inset-right));
@@ -202,7 +202,7 @@
       .stamp small { font-size: 15px; line-height: 1.2; }
       h1 { font-size: 34px; }
     }
-    @media (max-width: 720px) and (orientation: landscape) {
+    @media (max-height: 520px) and (orientation: landscape) {
       .dock {
         left: max(12px, env(safe-area-inset-left));
         right: auto;
@@ -347,15 +347,26 @@
       return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
     }
     function gapSize() { return flight.h * 0.38; }
-    function isPhone() { return flight.w <= 720; }
-    function barW() { return isPhone() ? Math.max(76, flight.w * 0.22) : Math.max(108, flight.w * 0.09); }
+    // Pace follows a desktop-shaped course, but a narrow screen can only see
+    // so far ahead. Cap it so the next column is on screen for about two
+    // seconds, and keep each column a gate rather than a wall.
+    function courseW() {
+      const shaped = Math.max(flight.w, flight.h * 1.6);
+      const ahead = flight.w * 0.8;
+      return Math.min(shaped, Math.max(flight.w, ahead / 0.38));
+    }
+    function barW() {
+      const natural = Math.max(108, courseW() * 0.09);
+      if (flight.w >= flight.h) return natural;
+      return Math.min(natural, Math.max(72, flight.w * 0.2));
+    }
     function pressure() { return flight.pressure || 0; }
     function spacing() {
-      return flight.w * (isPhone() ? 0.72 - pressure() * 0.12 : 0.46 - pressure() * 0.1);
+      return courseW() * (0.46 - pressure() * 0.1);
     }
     function scrollSpeed() {
       const stage = flight.solar ? 0.09 : (flight.boosters ? 0.03 : 0);
-      return flight.w * (0.2 + pressure() * 0.05 + stage);
+      return courseW() * (0.2 + pressure() * 0.05 + stage);
     }
     function enemyGap() { return 10 - pressure() * 6.6; }
 
@@ -373,7 +384,7 @@
         return;
       }
       flight.pod.r = Math.max(14, Math.min(22, flight.h * 0.028));
-      flight.pod.x = flight.w * 0.28;
+      flight.pod.x = flight.w * (flight.w < flight.h * 1.2 ? 0.2 : 0.28);
     }
 
     function attractX() {
@@ -687,7 +698,7 @@
           baseY,
           y: baseY,
           size,
-          vx: flight.w * ((kind === "pull" ? 0.16 : 0.2) + pressure() * 0.05),
+          vx: courseW() * ((kind === "pull" ? 0.16 : 0.2) + pressure() * 0.05),
           pulse: 0,
         });
         flight.oomCount++;
@@ -733,7 +744,7 @@
         if (wave.timer <= 0) wave.state = "active";
         return;
       }
-      wave.x -= flight.w * 0.16 * dt;
+      wave.x -= courseW() * 0.16 * dt;
       const shipLeft = flight.pod.x - flight.pod.r * 1.7;
       const shipRight = flight.pod.x + flight.pod.r * 1.7;
       const overlaps = shipRight > wave.x && shipLeft < wave.x + wave.w;
@@ -748,7 +759,6 @@
 
     function draw() {
       const { w, h } = flight;
-      ctx.clearRect(0, 0, w, h);
       const g = ctx.createLinearGradient(0, 0, 0, h);
       g.addColorStop(0, "#151947");
       g.addColorStop(0.55, "#0b0e2c");
@@ -1610,6 +1620,7 @@
       flight.solar = false;
       flight.solarDeploy = 0;
       flight.oomNext = 12;
+      resize();
       document.querySelector("#stamp").classList.add("hidden");
       document.querySelector("#result").classList.add("hidden");
       document.querySelector("#worker").textContent = "";
