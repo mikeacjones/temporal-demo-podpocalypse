@@ -37,7 +37,6 @@ type PlayerInput struct {
 	Name     string
 	Title    string
 	Email    string
-	Consent  bool
 	State    *PlayerState
 }
 
@@ -54,7 +53,7 @@ type PlayerState struct {
 	Name          string       `json:"name"`
 	Title         string       `json:"title"`
 	Email         string       `json:"email"`
-	Consent       bool         `json:"consent"`
+	Consent       bool         `json:"consent"` // No longer collected: playing is consent. Kept so running histories decode the same.
 	CreatedAt     time.Time    `json:"createdAt"`
 	BestScore     int          `json:"bestScore"`
 	BestSessionID string       `json:"bestSessionId,omitempty"`
@@ -157,7 +156,6 @@ func PlayerWorkflow(ctx workflow.Context, in PlayerInput) error {
 			Name:      in.Name,
 			Title:     in.Title,
 			Email:     in.Email,
-			Consent:   in.Consent,
 			CreatedAt: workflow.Now(ctx),
 		}
 	}
@@ -183,7 +181,6 @@ func PlayerWorkflow(ctx workflow.Context, in PlayerInput) error {
 		if next.Title != "" {
 			state.Title = next.Title
 		}
-		state.Consent = next.Consent
 		return state, nil
 	}); err != nil {
 		return err

@@ -24,26 +24,34 @@ import (
 type Server struct {
 	Client client.Client
 	Config config.Config
+	views  *viewCache
 }
 
+// PlayRequest starts a flight at the open booth. Entering your details to
+// play is the consent; there is no checkbox.
 type PlayRequest struct {
 	Name            string `json:"name"`
 	Title           string `json:"title"`
 	Email           string `json:"email"`
-	Consent         bool   `json:"consent"`
 	DurationSeconds int    `json:"durationSeconds"`
-	FlightCode      string `json:"flightCode"`
-	EventID         string `json:"eventId"`
 }
 
 func (s *Server) Handler() http.Handler {
+	s.views = newViewCache(time.Second)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.HandleFunc("GET /api/meta", s.meta)
-	mux.HandleFunc("GET /api/events/{id}", s.publicEvent)
 	mux.HandleFunc("GET /api/kiosk", s.kiosk)
-	mux.HandleFunc("GET /api/kiosk/events", s.kioskEvents)
-	mux.HandleFunc("POST /api/kiosk/bind", s.kioskBind)
+	mux.HandleFunc("GET /api/booth-events", s.listBoothEvents)
+	mux.HandleFunc("POST /api/booth-events", s.openBoothEvent)
+	mux.HandleFunc("GET /api/booth-events/{id}", s.boothEvent)
+	mux.HandleFunc("GET /api/booth-events/{id}/qr.png", s.boothQR)
+	mux.HandleFunc("POST /api/booth-events/{id}/join", s.joinBoothEvent)
+	mux.HandleFunc("POST /api/booth-events/{id}/next", s.callNext)
+	mux.HandleFunc("POST /api/booth-events/{id}/turn", s.startTurn)
+	mux.HandleFunc("POST /api/booth-events/{id}/skip", s.skipTurn)
+	mux.HandleFunc("POST /api/booth-events/{id}/close", s.closeBoothEvent)
+	mux.HandleFunc("GET /join/{id}", s.joinPage)
 	mux.HandleFunc("POST /api/play", s.play)
 	mux.HandleFunc("POST /api/players/lookup", s.lookupPlayer)
 	mux.HandleFunc("GET /api/sessions/{id}", s.session)
@@ -77,9 +85,6 @@ func applyReturning(in PlayRequest, profile workflows.PlayerState, found bool) (
 	}
 	if in.Title == "" {
 		in.Title = profile.Title
-	}
-	if !in.Consent {
-		in.Consent = profile.Consent
 	}
 	return in, nil
 }
@@ -138,20 +143,6 @@ func (s *Server) play(w http.ResponseWriter, r *http.Request) {
 	req.Name = strings.TrimSpace(req.Name)
 	req.Title = strings.TrimSpace(req.Title)
 	req.Email = strings.TrimSpace(req.Email)
-	req.FlightCode = strings.TrimSpace(req.FlightCode)
-	if req.FlightCode != "" {
-		claimCtx, claimCancel := context.WithTimeout(r.Context(), 20*time.Second)
-		profile, err := s.claimFlight(claimCtx, req.EventID, req.FlightCode)
-		claimCancel()
-		if err != nil {
-			writeFlightErr(w, err)
-			return
-		}
-		req.Name = profile.Name
-		req.Title = profile.Role
-		req.Email = profile.Email
-		req.Consent = true
-	}
 	if !validEmail(req.Email) {
 		writeErr(w, http.StatusBadRequest, "email is required")
 		return
@@ -191,7 +182,6 @@ func (s *Server) play(w http.ResponseWriter, r *http.Request) {
 		Name:     req.Name,
 		Title:    req.Title,
 		Email:    req.Email,
-		Consent:  req.Consent,
 	})
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "could not open your player record")
@@ -206,7 +196,6 @@ func (s *Server) play(w http.ResponseWriter, r *http.Request) {
 		Name:             req.Name,
 		Title:            req.Title,
 		Email:            req.Email,
-		Consent:          req.Consent,
 		Duration:         duration,
 		ControlTaskQueue: s.Config.ControlQueue,
 	})
@@ -379,10 +368,18 @@ func updateWaitEnded(ctx context.Context, err error) bool {
 	return strings.Contains(err.Error(), "Timeout or cancellation")
 }
 
+// boardID is the event's standings for ?event=<id>, or the open booth's.
+func boardID(r *http.Request) string {
+	if id := r.URL.Query().Get("event"); names.ValidSessionID(id) {
+		return names.EventLeaderboardID(id)
+	}
+	return names.LeaderboardWorkflowID
+}
+
 func (s *Server) leaderboard(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
-	val, err := s.Client.QueryWorkflow(ctx, names.LeaderboardWorkflowID, "", workflows.QueryBoard)
+	val, err := s.Client.QueryWorkflow(ctx, boardID(r), "", workflows.QueryBoard)
 	if err != nil {
 		writeJSON(w, http.StatusOK, []workflows.BoardEntry{})
 		return
@@ -405,7 +402,7 @@ func (s *Server) prize(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
-	val, err := s.Client.QueryWorkflow(ctx, names.LeaderboardWorkflowID, "", workflows.QueryBoard)
+	val, err := s.Client.QueryWorkflow(ctx, boardID(r), "", workflows.QueryBoard)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "leaderboard could not be read")
 		return
@@ -426,19 +423,11 @@ func (s *Server) prize(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadGateway, "player record could not be read")
 		return
 	}
-	if !profile.Consent {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"entry":   winner,
-			"consent": false,
-		})
-		return
-	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"entry":   winner,
-		"consent": true,
-		"email":   profile.Email,
-		"name":    profile.Name,
-		"title":   profile.Title,
+		"entry": winner,
+		"email": profile.Email,
+		"name":  profile.Name,
+		"title": profile.Title,
 	})
 }
 

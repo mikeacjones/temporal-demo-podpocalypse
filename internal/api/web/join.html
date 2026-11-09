@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Join the queue</title>
+  <style>
+    :root {
+      --shaft: #080a20;
+      --panel: #0c0e2b;
+      --line: #444ce7;
+      --ink: #f8fafc;
+      --dim: #aeb5d6;
+      --pod: #8b93ff;
+      --go: #64d8ff;
+      --hazard: #ff496c;
+      --focus: #64d8ff;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; background: var(--shaft); color: var(--ink); }
+    body {
+      font-family: "Avenir Next", "Segoe UI", sans-serif;
+      padding: max(20px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+    }
+    main { max-width: 440px; margin: 0 auto; }
+    .kicker { margin: 0; color: var(--dim); font-size: 14px; letter-spacing: 0.04em; text-transform: uppercase; }
+    h1 { margin: 6px 0 20px; font-size: 30px; line-height: 1.1; }
+    .card { padding: 20px 18px; background: var(--panel); border: 1px solid var(--line); }
+    p { line-height: 1.4; }
+    label { display: block; margin: 0 0 16px; }
+    label span { display: block; margin-bottom: 6px; color: #aebed9; font-size: 14px; }
+    input {
+      width: 100%; padding: 8px 0 10px; appearance: none; border: 0; border-radius: 0;
+      border-bottom: 2px solid #92a4c3; background: transparent; color: var(--ink);
+      font: inherit; font-size: 20px;
+    }
+    input:focus { outline: none; border-bottom-color: var(--pod); }
+    :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+    button {
+      width: 100%; min-height: 52px; margin-top: 6px; padding: 12px 20px;
+      font: inherit; font-size: 18px; font-weight: 700; cursor: pointer;
+      color: #080a20; background: var(--pod); border: 0;
+    }
+    button:disabled { opacity: 0.6; cursor: progress; }
+    .note { margin: 14px 0 0; color: var(--dim); font-size: 14px; }
+    .err { min-height: 1.4em; margin: 12px 0 0; color: var(--hazard); font-weight: 600; }
+    .place {
+      display: block; margin: 0; font-family: "Arial Black", Impact, sans-serif;
+      font-size: 88px; line-height: 0.9; letter-spacing: -0.04em; color: var(--pod);
+    }
+    .up .place { color: var(--go); }
+    .headline { margin: 14px 0 0; font-size: 24px; font-weight: 700; }
+    .hidden { display: none !important; }
+    @media (prefers-reduced-motion: no-preference) {
+      .up .place { animation: pulse 1.2s ease-in-out infinite alternate; }
+      @keyframes pulse { from { opacity: 1; } to { opacity: 0.55; } }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <p class="kicker">Kill the worker</p>
+    <h1 id="event">Join the queue</h1>
+
+    <form class="card" id="join">
+      <label><span>Name</span><input id="name" name="name" type="text" autocomplete="name" maxlength="80" required></label>
+      <label><span>Title</span><input id="title" name="title" type="text" autocomplete="organization-title" maxlength="80" required></label>
+      <label><span>Email</span><input id="email" name="email" type="email" autocomplete="email" maxlength="120" required></label>
+      <button id="go" type="submit">Join the queue</button>
+      <p class="err" id="err" role="alert"></p>
+      <p class="note">Your name and title appear on the booth screen and the standings. Temporal uses your email to follow up after the event.</p>
+    </form>
+
+    <section class="card hidden" id="status" aria-live="polite">
+      <strong class="place" id="place"></strong>
+      <p class="headline" id="headline"></p>
+      <p class="note" id="detail"></p>
+      <button class="hidden" id="again" type="button">Join again</button>
+      <p class="err" id="againerr" role="alert"></p>
+    </section>
+  </main>
+
+  <script>
+    const eventId = (location.pathname.match(/^\/join\/([a-f0-9]{8})\/?$/) || [])[1] || "";
+    const store = {
+      get(key) { try { return localStorage.getItem(key); } catch (e) { return null; } },
+      set(key, value) { try { localStorage.setItem(key, value); } catch (e) { /* private window */ } },
+    };
+    // A random value for this browser, so one phone holds one place even under
+    // a second email. It is a guard against mistakes, not a security control.
+    let browserId = store.get("podpocalypse-browser");
+    if (!browserId) {
+      browserId = (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2)).slice(0, 64);
+      store.set("podpocalypse-browser", browserId);
+    }
+    const ticketKey = "podpocalypse-ticket-" + eventId;
+    let ticket = store.get(ticketKey) || "";
+    let lastPhase = "";
+    let flightSeconds = 60;
+    let pollTimer = 0;
+    const $ = (id) => document.getElementById(id);
+
+    for (const id of ["name", "title", "email"]) {
+      const saved = store.get("podpocalypse-" + id);
+      if (saved) $(id).value = saved;
+    }
+
+    function showForm() {
+      $("join").classList.remove("hidden");
+      $("status").classList.add("hidden");
+    }
+
+    function showStatus(place, headline, detail, canRejoin, up) {
+      $("join").classList.add("hidden");
+      $("status").classList.remove("hidden");
+      $("status").classList.toggle("up", !!up);
+      $("place").textContent = place;
+      $("headline").textContent = headline;
+      $("detail").textContent = detail;
+      $("again").classList.toggle("hidden", !canRejoin);
+    }
+
+    async function join(errEl, button) {
+      errEl.textContent = "";
+      button.disabled = true;
+      const details = { name: $("name").value.trim(), title: $("title").value.trim(), email: $("email").value.trim() };
+      try {
+        const res = await fetch("/api/booth-events/" + eventId + "/join", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ ...details, browserId }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          errEl.textContent = body.error || "The booth did not take that. Try again.";
+          return;
+        }
+        for (const [key, value] of Object.entries(details)) store.set("podpocalypse-" + key, value);
+        ticket = body.ticket;
+        store.set(ticketKey, ticket);
+        lastPhase = "";
+        render({ position: body.position, phase: body.position === 0 ? "calling" : "", open: true, waiting: body.position });
+        poll();
+      } catch (e) {
+        errEl.textContent = "Your phone could not reach the booth. Try again.";
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    function render(s) {
+      if (s.closing) {
+        showStatus("", "This event has closed.", "Thanks for stopping by.", false);
+        return;
+      }
+      if (s.position > 0) {
+        const minutes = Math.max(1, Math.ceil(s.position * (flightSeconds + 30) / 60));
+        const ahead = s.position === 1 ? "You're next." : (s.position - 1) + " ahead of you.";
+        showStatus("#" + s.position, "You're in line.", ahead + " About " + minutes + " min. Stay near the booth.", false);
+      } else if (s.position === 0 && s.phase === "calling") {
+        showStatus("GO", "You're up!", "Press Enter or Space at the booth to start your flight.", false, true);
+      } else if (s.position === 0) {
+        showStatus("", "You're flying.", "Good luck. Watch the clock.", false);
+      } else if (lastPhase === "calling") {
+        showStatus("", "You missed your turn.", "Join again and you'll go to the back of the line.", true);
+      } else if (lastPhase === "flying") {
+        showStatus("", "Thanks for flying.", "Your score is on the standings. You can join the line again.", true);
+      } else {
+        ticket = "";
+        showForm();
+        return;
+      }
+      if (s.position === 0) lastPhase = s.phase;
+      else if (s.position > 0) lastPhase = "waiting";
+    }
+
+    async function poll() {
+      clearTimeout(pollTimer);
+      if (!ticket) return;
+      try {
+        const res = await fetch("/api/booth-events/" + eventId + "?ticket=" + encodeURIComponent(ticket));
+        if (res.ok) render(await res.json());
+      } catch (e) { /* keep the last answer on screen */ }
+      pollTimer = setTimeout(poll, 2000);
+    }
+
+    $("join").addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      join($("err"), $("go"));
+    });
+    $("again").addEventListener("click", () => join($("againerr"), $("again")));
+
+    async function boot() {
+      if (!eventId) {
+        $("event").textContent = "This link is not a booth queue.";
+        $("join").classList.add("hidden");
+        return;
+      }
+      try {
+        const meta = await fetch("/api/meta");
+        if (meta.ok) flightSeconds = (await meta.json()).durationSeconds || 60;
+        const res = await fetch("/api/booth-events/" + eventId);
+        if (res.ok) {
+          const event = await res.json();
+          $("event").textContent = event.name || "Join the queue";
+          if (event.closing) render({ closing: true });
+        } else if (res.status === 404) {
+          $("event").textContent = "This queue is not open.";
+          $("join").classList.add("hidden");
+          return;
+        }
+      } catch (e) { /* the form still works */ }
+      if (ticket) poll();
+    }
+    boot();
+  </script>
+</body>
+</html>

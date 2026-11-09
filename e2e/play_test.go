@@ -63,7 +63,7 @@ func TestPlaythrough(t *testing.T) {
 	waitHTTP(t, "http://127.0.0.1:18080/healthz")
 
 	playBody := map[string]any{
-		"name": "Ada Lovelace", "title": "SA", "email": "ada@temporal.io", "consent": true,
+		"name": "Ada Lovelace", "title": "SA", "email": "ada@temporal.io",
 	}
 	var started struct {
 		SessionID string `json:"sessionId"`

@@ -1,105 +1,101 @@
 package workflows
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"strings"
+	"time"
+
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 )
 
+// The event tracker's Nexus service. It stores events and their responses and
+// knows nothing about this game; everything game-shaped stays on this side.
 const (
-	LeadServiceName = "event-leads"
-	QueryBooth      = "booth"
-	UpdateBind      = "bind"
-	UpdateClear     = "clear"
+	LeadServiceName      = "event-leads"
+	opCreateEvent        = "create_event"
+	opSubmitParticipant  = "submit_participant"
+	defaultEventDuration = 3 // days, counted in UTC
 )
 
-type BoothState struct {
-	EventID   string `json:"eventId"`
-	EventName string `json:"eventName"`
-	FormURL   string `json:"formURL"`
-	QRURL     string `json:"qrURL"`
-}
-
+// LeadEvent is the tracker's view of an event.
 type LeadEvent struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Status string `json:"status"`
+	ID       string    `json:"id"`
+	Link     string    `json:"link"`
+	Name     string    `json:"name"`
+	Status   string    `json:"status"`
+	ClosesAt time.Time `json:"closesAt"`
 }
 
-type leadList struct {
-	Events []LeadEvent `json:"events"`
+type leadForm struct {
+	Sections []leadSection `json:"sections"`
 }
 
-type FlightProfile struct {
-	EventID string `json:"eventId"`
-	Name    string `json:"name"`
-	Role    string `json:"role"`
-	Email   string `json:"email"`
+type leadSection struct {
+	ID     string      `json:"id"`
+	Title  string      `json:"title"`
+	Fields []leadField `json:"fields"`
 }
 
-type ClaimFlightInput struct {
-	Endpoint string
-	EventID  string
-	Code     string
+type leadField struct {
+	ID       string `json:"id"`
+	Label    string `json:"label"`
+	Type     string `json:"type"`
+	Required bool   `json:"required"`
 }
 
-func KioskWorkflow(ctx workflow.Context) error {
-	var state BoothState
-	if err := workflow.SetQueryHandler(ctx, QueryBooth, func() (BoothState, error) {
-		return state, nil
-	}); err != nil {
-		return err
+type createLeadEvent struct {
+	RequestID string   `json:"requestId"`
+	CreatedBy string   `json:"createdBy"`
+	Name      string   `json:"name"`
+	EndDate   string   `json:"endDate"`
+	Form      leadForm `json:"form"`
+}
+
+type leadSubmission struct {
+	Name      string `json:"name"`
+	Role      string `json:"role"`
+	Email     string `json:"email"`
+	RequestID string `json:"requestId"`
+}
+
+type submitLead struct {
+	EventID    string         `json:"eventId"`
+	Submission leadSubmission `json:"submission"`
+}
+
+// defaultLeadEvent is the event the booth opens: the title from the screen and
+// a form with only name, title, and email. The tracker reads the field IDs
+// name, role, and email as its identity fields. Submissions close at 00:00 UTC
+// after the end date, so "today" would close mid-afternoon at a US booth.
+func defaultLeadEvent(requestID, name, createdBy string, now time.Time) createLeadEvent {
+	return createLeadEvent{
+		RequestID: requestID,
+		CreatedBy: createdBy,
+		Name:      name,
+		EndDate:   now.UTC().AddDate(0, 0, defaultEventDuration).Format("2006-01-02"),
+		Form: leadForm{Sections: []leadSection{{ID: "details", Title: "Your details", Fields: []leadField{
+			{ID: "name", Label: "Name", Type: "short_text", Required: true},
+			{ID: "role", Label: "Title", Type: "short_text", Required: true},
+			{ID: "email", Label: "Email", Type: "email", Required: true},
+		}}}},
 	}
-	if err := workflow.SetUpdateHandler(ctx, UpdateBind, func(_ workflow.Context, next BoothState) (BoothState, error) {
-		if next.EventID == "" || next.EventName == "" {
-			return BoothState{}, temporal.NewApplicationError("choose an open event", "Invalid")
-		}
-		state = next
-		return state, nil
-	}); err != nil {
-		return err
-	}
-	if err := workflow.SetUpdateHandler(ctx, UpdateClear, func(workflow.Context) (BoothState, error) {
-		state = BoothState{}
-		return state, nil
-	}); err != nil {
-		return err
-	}
-	return workflow.Await(ctx, func() bool { return false })
 }
 
-func ListLeadEvents(ctx workflow.Context, endpoint string) ([]LeadEvent, error) {
-	var out leadList
-	if err := callLeads(ctx, endpoint, "list_events", struct{}{}, &out); err != nil {
-		return nil, err
-	}
-	open := make([]LeadEvent, 0, len(out.Events))
-	for _, event := range out.Events {
-		if event.Status == "open" && event.ID != "" {
-			open = append(open, event)
-		}
-	}
-	return open, nil
-}
-
-func GetLeadEvent(ctx workflow.Context, endpoint, eventID string) (LeadEvent, error) {
-	var event LeadEvent
-	err := callLeads(ctx, endpoint, "get_event", map[string]string{"eventId": eventID}, &event)
-	return event, err
-}
-
-func ClaimFlight(ctx workflow.Context, in ClaimFlightInput) (FlightProfile, error) {
-	var profile FlightProfile
-	err := callLeads(ctx, in.Endpoint, "claim_flight_pass", map[string]string{
-		"eventId": in.EventID,
-		"code":    in.Code,
-	}, &profile)
-	return profile, err
+// leadRequestID is the same for the same person and details, so joining again
+// with the same details hits the tracker's stored receipt and writes nothing.
+func leadRequestID(eventID, email, name, title string) string {
+	sum := sha256.Sum256([]byte(strings.Join([]string{eventID, strings.ToLower(strings.TrimSpace(email)), name, title}, "\n")))
+	return hex.EncodeToString(sum[:16])
 }
 
 func callLeads(ctx workflow.Context, endpoint, operation string, input, output any) error {
 	if endpoint == "" {
-		return temporal.NewNonRetryableApplicationError("event leads are not configured", "Unconfigured", nil)
+		return temporal.NewNonRetryableApplicationError("this booth is not connected to the event tracker", "Unconfigured", nil)
 	}
-	future := workflow.NewNexusClient(endpoint, LeadServiceName).ExecuteOperation(ctx, operation, input, workflow.NexusOperationOptions{})
+	future := workflow.NewNexusClient(endpoint, LeadServiceName).ExecuteOperation(ctx, operation, input, workflow.NexusOperationOptions{
+		ScheduleToCloseTimeout: 30 * time.Second,
+	})
 	return future.Get(ctx, output)
 }

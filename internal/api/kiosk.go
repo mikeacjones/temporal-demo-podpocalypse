@@ -12,215 +12,400 @@ import (
 	"time"
 
 	enumspb "go.temporal.io/api/enums/v1"
+	"go.temporal.io/api/serviceerror"
+	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/temporal"
 
 	"podpocalypse/internal/names"
+	"podpocalypse/internal/qrcode"
 	"podpocalypse/internal/workflows"
 )
 
+// kiosk tells the screen whether a signed-in employee is at it.
 func (s *Server) kiosk(w http.ResponseWriter, r *http.Request) {
 	employee, _ := s.employee(r)
-	// The open booth is not an event. An event page asks for that event itself.
 	writeJSON(w, http.StatusOK, map[string]any{
-		"employee":  employee != "",
-		"eventId":   "",
-		"eventName": "",
-		"formURL":   "",
-		"qrURL":     "",
+		"employee": employee != "",
+		"leads":    s.Config.LeadsEndpoint != "",
 	})
 }
 
-func (s *Server) publicEvent(w http.ResponseWriter, r *http.Request) {
-	id := strings.TrimSpace(r.PathValue("id"))
-	if id == "" || s.Config.LeadsEndpoint == "" {
-		writeErr(w, http.StatusNotFound, "no such event")
-		return
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
-	defer cancel()
-	token, err := names.NewSessionID()
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "could not open that event")
-		return
-	}
-	var event workflows.LeadEvent
-	if err := s.finishWorkflow(ctx, "lead-get-"+token, workflows.GetLeadEvent, &event, s.Config.LeadsEndpoint, id); err != nil {
-		writeErr(w, http.StatusNotFound, "no such event")
-		return
-	}
-	if event.ID == "" {
-		writeErr(w, http.StatusNotFound, "no such event")
-		return
-	}
-	form, qr := "", ""
-	if s.Config.LeadsURL != "" {
-		form = s.Config.LeadsURL + "/events/" + url.PathEscape(event.ID)
-		qr = form + "/qr.png"
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"id": event.ID, "name": event.Name, "status": event.Status, "formURL": form, "qrURL": qr,
-	})
+type boothEventSummary struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
-func (s *Server) kioskEvents(w http.ResponseWriter, r *http.Request) {
+// listBoothEvents is the events this booth opened and that are still running,
+// read from Visibility. The name is in each workflow's memo.
+func (s *Server) listBoothEvents(w http.ResponseWriter, r *http.Request) {
 	if !s.requireEmployee(w, r) {
 		return
 	}
-	if s.Config.LeadsEndpoint == "" {
-		writeErr(w, http.StatusNotFound, "this booth is not connected to the event tracker")
-		return
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	id, err := names.NewSessionID()
+	resp, err := s.Client.ListWorkflow(ctx, &workflowservice.ListWorkflowExecutionsRequest{
+		Namespace: s.Config.TemporalNamespace,
+		PageSize:  50,
+		Query:     "WorkflowType = 'BoothEventWorkflow' AND ExecutionStatus = 'Running'",
+	})
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "could not list events")
-		return
-	}
-	var events []workflows.LeadEvent
-	if err := s.finishWorkflow(ctx, "lead-list-"+id, workflows.ListLeadEvents, &events, s.Config.LeadsEndpoint); err != nil {
 		writeErr(w, http.StatusBadGateway, "could not list events")
 		return
 	}
-	if events == nil {
-		events = []workflows.LeadEvent{}
+	events := []boothEventSummary{}
+	for _, info := range resp.GetExecutions() {
+		id := strings.TrimPrefix(info.GetExecution().GetWorkflowId(), names.BoothEventWorkflowID(""))
+		var name string
+		if field := info.GetMemo().GetFields()["name"]; field != nil {
+			_ = converter.GetDefaultDataConverter().FromPayload(field, &name)
+		}
+		events = append(events, boothEventSummary{ID: id, Name: name})
 	}
 	writeJSON(w, http.StatusOK, events)
 }
 
-func (s *Server) kioskBind(w http.ResponseWriter, r *http.Request) {
-	if !s.requireEmployee(w, r) {
+// openBoothEvent starts a booth event with its open Update in one call. The
+// open handler creates the event in the tracker over Nexus.
+func (s *Server) openBoothEvent(w http.ResponseWriter, r *http.Request) {
+	employee, err := s.employee(r)
+	if err != nil || employee == "" {
+		s.requireEmployee(w, r)
+		return
+	}
+	if s.Config.LeadsEndpoint == "" {
+		writeErr(w, http.StatusConflict, "this booth is not connected to the event tracker")
 		return
 	}
 	var req struct {
-		EventID string `json:"eventId"`
+		Name string `json:"name"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<12)).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "choose an event")
+		writeErr(w, http.StatusBadRequest, "the form could not be read")
 		return
 	}
-	req.EventID = strings.TrimSpace(req.EventID)
-	if req.EventID == "" || s.Config.LeadsEndpoint == "" {
-		writeErr(w, http.StatusBadRequest, "choose an event")
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" || len(req.Name) > 120 {
+		writeErr(w, http.StatusBadRequest, "give the event a title")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
-	defer cancel()
 	id, err := names.NewSessionID()
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "could not open that event")
+		writeErr(w, http.StatusInternalServerError, "could not open an event")
 		return
 	}
-	var event workflows.LeadEvent
-	if err := s.finishWorkflow(ctx, "lead-get-"+id, workflows.GetLeadEvent, &event, s.Config.LeadsEndpoint, req.EventID); err != nil {
-		writeErr(w, http.StatusBadGateway, "could not open that event")
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	start := s.Client.NewWithStartWorkflowOperation(client.StartWorkflowOptions{
+		ID:        names.BoothEventWorkflowID(id),
+		TaskQueue: s.Config.ControlQueue,
+		Memo:      map[string]any{"name": req.Name},
+		// The ID is new, so an existing workflow would be a bug, not a retry.
+		WorkflowIDConflictPolicy: enumspb.WORKFLOW_ID_CONFLICT_POLICY_FAIL,
+	}, workflows.BoothEventWorkflow, workflows.BoothEventInput{
+		ID:               id,
+		LeadsEndpoint:    s.Config.LeadsEndpoint,
+		ControlTaskQueue: s.Config.ControlQueue,
+		Duration:         s.Config.GameDuration,
+	})
+	handle, err := s.Client.UpdateWithStartWorkflow(ctx, client.UpdateWithStartWorkflowOptions{
+		StartWorkflowOperation: start,
+		UpdateOptions: client.UpdateWorkflowOptions{
+			UpdateName: workflows.UpdateOpen, UpdateID: "open-" + id,
+			Args: []any{workflows.OpenInput{Name: req.Name, CreatedBy: employee}}, WaitForStage: client.WorkflowUpdateStageCompleted,
+		},
+	})
+	var view workflows.BoothEventView
+	if err == nil {
+		err = handle.Get(ctx, &view)
+	}
+	if err != nil {
+		writeUpdateErr(w, err, "could not open the event")
 		return
 	}
-	if event.Status != "open" || event.ID == "" {
-		writeErr(w, http.StatusBadRequest, "that event is not open")
+	writeJSON(w, http.StatusCreated, publicView(view))
+}
+
+// boothEvent is the screen's and phones' read. It comes from the shared cache,
+// one Query per event per second however many phones are polling.
+func (s *Server) boothEvent(w http.ResponseWriter, r *http.Request) {
+	id, ok := boothEventID(w, r)
+	if !ok {
 		return
 	}
-	form := ""
-	qr := ""
-	if s.Config.LeadsURL != "" {
-		form = s.Config.LeadsURL + "/events/" + url.PathEscape(event.ID)
-		qr = form + "/qr.png"
-	}
-	state := workflows.BoothState{EventID: event.ID, EventName: event.Name, FormURL: form, QRURL: qr}
-	if err := s.ensureKiosk(ctx); err != nil {
-		writeErr(w, http.StatusBadGateway, "could not check in the booth")
+	view, err := s.views.get(r.Context(), id, s.queryBoothEvent)
+	if err != nil {
+		var missing *serviceerror.NotFound
+		if errors.As(err, &missing) {
+			writeErr(w, http.StatusNotFound, "no such event")
+			return
+		}
+		writeErr(w, http.StatusServiceUnavailable, "the event is not answering yet")
 		return
 	}
+	if ticket := r.URL.Query().Get("ticket"); ticket != "" {
+		writeJSON(w, http.StatusOK, ticketView(view, ticket))
+		return
+	}
+	writeJSON(w, http.StatusOK, publicView(view))
+}
+
+func (s *Server) queryBoothEvent(ctx context.Context, id string) (workflows.BoothEventView, error) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	var view workflows.BoothEventView
+	val, err := s.Client.QueryWorkflow(ctx, names.BoothEventWorkflowID(id), "", workflows.QueryBoothEvent)
+	if err != nil {
+		return view, err
+	}
+	err = val.Get(&view)
+	return view, err
+}
+
+func (s *Server) joinBoothEvent(w http.ResponseWriter, r *http.Request) {
+	id, ok := boothEventID(w, r)
+	if !ok {
+		return
+	}
+	var req workflows.JoinInput
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<12)).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "the form could not be read")
+		return
+	}
+	var result workflows.JoinResult
+	if !s.boothUpdate(w, r, id, workflows.UpdateJoin, 25*time.Second, &result, req) {
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) callNext(w http.ResponseWriter, r *http.Request) {
+	id, ok := boothEventID(w, r)
+	if !ok {
+		return
+	}
+	var next *workflows.ViewEntry
+	if !s.boothUpdate(w, r, id, workflows.UpdateCallNext, 5*time.Second, &next) {
+		return
+	}
+	if next == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"called": nil})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"called": publicEntry(*next)})
+}
+
+func (s *Server) skipTurn(w http.ResponseWriter, r *http.Request) {
+	id, ok := boothEventID(w, r)
+	if !ok {
+		return
+	}
+	entry, ok := entryID(w, r)
+	if !ok {
+		return
+	}
+	var view workflows.BoothEventView
+	if !s.boothUpdate(w, r, id, workflows.UpdateSkip, 5*time.Second, &view, entry) {
+		return
+	}
+	writeJSON(w, http.StatusOK, publicView(view))
+}
+
+func (s *Server) closeBoothEvent(w http.ResponseWriter, r *http.Request) {
+	if !s.requireEmployee(w, r) {
+		return
+	}
+	id, ok := boothEventID(w, r)
+	if !ok {
+		return
+	}
+	var view workflows.BoothEventView
+	if !s.boothUpdate(w, r, id, workflows.UpdateClose, 5*time.Second, &view) {
+		return
+	}
+	writeJSON(w, http.StatusOK, publicView(view))
+}
+
+// startTurn starts the called person's flight, then answers like /api/play.
+func (s *Server) startTurn(w http.ResponseWriter, r *http.Request) {
+	id, ok := boothEventID(w, r)
+	if !ok {
+		return
+	}
+	entry, ok := entryID(w, r)
+	if !ok {
+		return
+	}
+	var started workflows.TurnStarted
+	if !s.boothUpdate(w, r, id, workflows.UpdateStartTurn, 10*time.Second, &started, entry) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
+	defer cancel()
+	// The flight records its score on the player when it ends, so the player
+	// has to exist by then. It also gives the screen the personal best.
+	profile, err := s.ensurePlayer(ctx, workflows.PlayerInput{
+		PlayerID: started.Entry.PlayerID, Name: started.Entry.Name, Title: started.Entry.Title, Email: started.Entry.Email,
+	})
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "could not open the player record")
+		return
+	}
+	state, err := s.awaitPlaying(ctx, started.SessionID)
+	if err != nil {
+		writeErr(w, http.StatusGatewayTimeout, "the session worker did not start")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"sessionId":    started.SessionID,
+		"playerId":     started.Entry.PlayerID,
+		"state":        state,
+		"personalBest": profile.BestScore,
+		"gamesPlayed":  profile.GamesPlayed,
+	})
+}
+
+func (s *Server) boothQR(w http.ResponseWriter, r *http.Request) {
+	id, ok := boothEventID(w, r)
+	if !ok {
+		return
+	}
+	origin := strings.TrimRight(s.Config.PublicURL, "/")
+	if origin == "" {
+		origin = "http://" + r.Host
+	}
+	png, err := qrcode.EncodePNG(origin+"/join/"+url.PathEscape(id), 512)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not draw the code")
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	_, _ = w.Write(png)
+}
+
+// boothUpdate sends one Update to the booth event and writes any error. The
+// cached view is dropped, so the next read shows the change.
+func (s *Server) boothUpdate(w http.ResponseWriter, r *http.Request, id, name string, wait time.Duration, dest any, args ...any) bool {
+	ctx, cancel := context.WithTimeout(r.Context(), wait)
+	defer cancel()
 	updateID, err := names.NewSessionID()
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "could not check in the booth")
-		return
+		writeErr(w, http.StatusInternalServerError, "could not send that")
+		return false
+	}
+	if args == nil {
+		args = []any{}
 	}
 	handle, err := s.Client.UpdateWorkflow(ctx, client.UpdateWorkflowOptions{
-		WorkflowID: names.KioskWorkflowID, UpdateName: workflows.UpdateBind,
-		UpdateID: "bind-" + updateID, Args: []any{state}, WaitForStage: client.WorkflowUpdateStageCompleted,
+		WorkflowID: names.BoothEventWorkflowID(id), UpdateName: name, UpdateID: name + "-" + updateID,
+		Args: args, WaitForStage: client.WorkflowUpdateStageCompleted,
 	})
+	if err == nil {
+		err = handle.Get(ctx, dest)
+	}
+	s.views.drop(id)
 	if err != nil {
-		writeErr(w, http.StatusBadGateway, "could not check in the booth")
+		writeUpdateErr(w, err, "the event did not accept that")
+		return false
+	}
+	return true
+}
+
+func writeUpdateErr(w http.ResponseWriter, err error, fallback string) {
+	var missing *serviceerror.NotFound
+	if errors.As(err, &missing) {
+		writeErr(w, http.StatusNotFound, "no such event")
 		return
 	}
-	if err := handle.Get(ctx, &state); err != nil {
-		writeErr(w, http.StatusBadGateway, "could not check in the booth")
+	var app *temporal.ApplicationError
+	if errors.As(err, &app) && app.Message() != "" {
+		writeErr(w, http.StatusConflict, app.Message())
 		return
 	}
-	writeJSON(w, http.StatusOK, state)
+	if errors.Is(err, context.DeadlineExceeded) {
+		writeErr(w, http.StatusGatewayTimeout, fallback)
+		return
+	}
+	// Validator rejections arrive as a plain error carrying the reason.
+	if msg := err.Error(); msg != "" && !strings.Contains(msg, "rpc error") && len(msg) < 200 {
+		writeErr(w, http.StatusConflict, msg)
+		return
+	}
+	writeErr(w, http.StatusBadGateway, fallback)
 }
 
-func (s *Server) claimFlight(ctx context.Context, eventID, code string) (workflows.FlightProfile, error) {
-	var profile workflows.FlightProfile
-	eventID = strings.TrimSpace(eventID)
-	if s.Config.LeadsEndpoint == "" {
-		return profile, errors.New("this booth is not connected to the event tracker")
+func boothEventID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	id := r.PathValue("id")
+	if !names.ValidSessionID(id) {
+		writeErr(w, http.StatusNotFound, "no such event")
+		return "", false
 	}
-	if eventID == "" {
-		return profile, errors.New("this flight code belongs on an event page")
-	}
-	code = strings.TrimSpace(code)
-	runID := "flight-claim/" + eventID + "/" + code
-	err := s.finishWorkflow(ctx, runID, workflows.ClaimFlight, &profile, workflows.ClaimFlightInput{
-		Endpoint: s.Config.LeadsEndpoint, EventID: eventID, Code: code,
-	})
-	if temporal.IsWorkflowExecutionAlreadyStartedError(err) {
-		err = s.Client.GetWorkflow(ctx, runID, "").Get(ctx, &profile)
-	}
-	return profile, err
+	return id, true
 }
 
-func (s *Server) boothState(ctx context.Context) (workflows.BoothState, error) {
-	var state workflows.BoothState
-	if s.Config.LeadsEndpoint == "" || s.Client == nil {
-		return state, nil
+func entryID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	var req struct {
+		EntryID string `json:"entryId"`
 	}
-	if err := s.ensureKiosk(ctx); err != nil {
-		return state, err
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<10)).Decode(&req); err != nil || req.EntryID == "" {
+		writeErr(w, http.StatusBadRequest, "entry is required")
+		return "", false
 	}
-	value, err := s.Client.QueryWorkflow(ctx, names.KioskWorkflowID, "", workflows.QueryBooth)
-	if err != nil {
-		return state, err
-	}
-	err = value.Get(&state)
-	return state, err
+	return req.EntryID, true
 }
 
-func (s *Server) ensureKiosk(ctx context.Context) error {
-	_, err := s.Client.ExecuteWorkflow(ctx, client.StartWorkflowOptions{
-		ID: names.KioskWorkflowID, TaskQueue: s.Config.ControlQueue,
-		WorkflowIDReusePolicy: enumspb.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY,
-	}, workflows.KioskWorkflow)
-	if temporal.IsWorkflowExecutionAlreadyStartedError(err) {
-		return nil
-	}
-	return err
+// publicEntry is what a screen may show about someone: first name and last
+// initial, and no ticket, so nobody can read another person's place.
+type publicEntryView struct {
+	EntryID string `json:"entryId"`
+	Name    string `json:"name"`
 }
 
-func (s *Server) finishWorkflow(ctx context.Context, id string, wf, output any, args ...any) error {
-	run, err := s.Client.ExecuteWorkflow(ctx, client.StartWorkflowOptions{
-		ID: id, TaskQueue: s.Config.ControlQueue,
-		WorkflowIDReusePolicy: enumspb.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY,
-	}, wf, args...)
-	if err != nil {
-		return err
-	}
-	return run.Get(ctx, output)
+func publicEntry(e workflows.ViewEntry) publicEntryView {
+	return publicEntryView{EntryID: e.EntryID, Name: shortName(e.Name)}
 }
 
-func writeFlightErr(w http.ResponseWriter, err error) {
-	msg := strings.ToLower(err.Error())
-	switch {
-	case strings.Contains(msg, "not connected"), strings.Contains(msg, "not checked"):
-		writeErr(w, http.StatusConflict, err.Error())
-	case strings.Contains(msg, "already used"):
-		writeErr(w, http.StatusConflict, "that flight code was already used")
-	case strings.Contains(msg, "expired"), strings.Contains(msg, "not found"):
-		writeErr(w, http.StatusNotFound, "that flight code is not valid")
-	default:
-		writeErr(w, http.StatusBadGateway, "the event tracker did not accept that code")
+func shortName(name string) string {
+	parts := strings.Fields(name)
+	if len(parts) < 2 {
+		return name
+	}
+	last := []rune(parts[len(parts)-1])
+	return parts[0] + " " + string(last[0]) + "."
+}
+
+func publicView(v workflows.BoothEventView) map[string]any {
+	queue := make([]publicEntryView, 0, len(v.Queue))
+	for _, e := range v.Queue {
+		queue = append(queue, publicEntry(e))
+	}
+	out := map[string]any{
+		"id": v.ID, "name": v.Name, "open": v.Open, "closing": v.Closing,
+		"phase": v.Phase, "queue": queue, "current": nil,
+	}
+	if v.Current != nil {
+		out["current"] = publicEntry(*v.Current)
+	}
+	return out
+}
+
+// ticketView is one phone's place: 0 while called or flying, -1 when it holds
+// no place (its flight is over, or its turn was skipped).
+func ticketView(v workflows.BoothEventView, ticket string) map[string]any {
+	position, phase := -1, ""
+	if v.Current != nil && v.Current.Ticket == ticket {
+		position, phase = 0, v.Phase
+	}
+	for i, e := range v.Queue {
+		if e.Ticket == ticket {
+			position = i + 1
+		}
+	}
+	return map[string]any{
+		"name": v.Name, "open": v.Open, "closing": v.Closing,
+		"position": position, "phase": phase, "waiting": len(v.Queue),
 	}
 }
 
@@ -238,6 +423,9 @@ func (s *Server) requireEmployee(w http.ResponseWriter, r *http.Request) bool {
 }
 
 func (s *Server) employee(r *http.Request) (string, error) {
+	if s.Config.DevAuthEmail != "" {
+		return s.Config.DevAuthEmail, nil
+	}
 	if s.Config.AuthVerifyURL == "" {
 		return "", nil
 	}
@@ -260,7 +448,7 @@ func (s *Server) employee(r *http.Request) (string, error) {
 	verify.Header.Set("X-Forwarded-Proto", origin.Scheme)
 	verify.Header.Set("X-Forwarded-Method", r.Method)
 	verify.Header.Set("X-Forwarded-Uri", r.URL.RequestURI())
-	response, err := http.DefaultClient.Do(verify)
+	response, err := authClient.Do(verify)
 	if err != nil {
 		return "", err
 	}
@@ -279,4 +467,10 @@ func (s *Server) employee(r *http.Request) (string, error) {
 		return "", nil
 	}
 	return strings.ToLower(email), nil
+}
+
+// authClient never follows redirects: the verifier answers 204 or not at all.
+var authClient = &http.Client{
+	Timeout:       3 * time.Second,
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 }

@@ -10,9 +10,9 @@ import (
 )
 
 func TestApplyReturning(t *testing.T) {
-	profile := workflows.PlayerState{Name: "Ada", Title: "SA", Consent: true}
+	profile := workflows.PlayerState{Name: "Ada", Title: "SA"}
 	got, err := applyReturning(PlayRequest{Email: "ada@temporal.io"}, profile, true)
-	if err != nil || got.Name != "Ada" || got.Title != "SA" || !got.Consent {
+	if err != nil || got.Name != "Ada" || got.Title != "SA" {
 		t.Fatalf("returning player: %+v %v", got, err)
 	}
 	got, err = applyReturning(PlayRequest{Email: "ada@temporal.io", Name: "Ada Lovelace"}, profile, true)
@@ -25,7 +25,7 @@ func TestApplyReturning(t *testing.T) {
 }
 
 func TestValidatePlay(t *testing.T) {
-	ok := PlayRequest{Name: "Ada", Title: "SA", Email: "ada@temporal.io", Consent: true}
+	ok := PlayRequest{Name: "Ada", Title: "SA", Email: "ada@temporal.io"}
 	if err := ValidatePlay(ok); err != nil {
 		t.Fatal(err)
 	}

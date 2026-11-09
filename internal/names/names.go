@@ -11,10 +11,16 @@ import (
 	"strings"
 )
 
-const (
-	LeaderboardWorkflowID = "leaderboard"
-	KioskWorkflowID       = "kiosk"
-)
+// LeaderboardWorkflowID is the open booth's standings. Each event has its own.
+const LeaderboardWorkflowID = "leaderboard"
+
+func EventLeaderboardID(boothEventID string) string {
+	return "leaderboard-" + boothEventID
+}
+
+func BoothEventWorkflowID(boothEventID string) string {
+	return "booth-event-" + boothEventID
+}
 
 var sessionIDPattern = regexp.MustCompile(`^[a-f0-9]{8}$`)
 

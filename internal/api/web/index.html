@@ -83,8 +83,6 @@
       caret-color: #f8fafc;
       box-shadow: 0 0 0 1000px #0c0e2b inset;
     }
-    .consent { display: flex; gap: 8px; align-items: flex-start; margin: 4px 0 16px; color: #aebed9; font-size: 14px; }
-    .consent input { margin-top: 2px; accent-color: #444ce7; width: 16px; height: 16px; }
     .go {
       width: 100%; padding: 14px 24px;
       border: 2px solid transparent;
@@ -152,8 +150,33 @@
     #again { color: #f8fafc; font-size: clamp(22px, 3vw, 32px); margin-top: 22px; }
 
     .hidden { display: none !important; }
-    #boothqr { display: block; width: 220px; height: 220px; margin: 12px auto; background: #fff; }
-    #boothname { text-align: center; }
+    .host { margin: 0 0 18px; padding: 0 0 16px; border-bottom: 1px solid var(--line); }
+    .host h2 { margin: 0 0 10px; font-size: 16px; font-weight: 600; }
+    .host ul { list-style: none; margin: 12px 0 0; padding: 0; }
+    .host li { display: flex; gap: 10px; align-items: center; justify-content: space-between; padding: 6px 0; border-top: 1px solid rgba(68, 76, 231, 0.4); }
+    .host li a { color: var(--pod); }
+    .host li button { padding: 4px 10px; color: var(--dim); background: transparent; border: 1px solid var(--line); }
+    .host .go { width: 100%; }
+
+    /* The ship flies right, and the standings hold the bottom-right corner, so
+       the queue keeps to the smallest box it can in the bottom-left. */
+    .queue {
+      position: fixed; left: 16px; bottom: 16px; z-index: 5;
+      display: flex; gap: 12px; align-items: flex-end;
+      max-width: min(420px, calc(100vw - 32px));
+      padding: 10px; background: var(--panel); border: 1px solid var(--line);
+    }
+    .queue img { display: block; width: 132px; height: 132px; background: #fff; image-rendering: pixelated; }
+    .queue.big img { width: 260px; height: 260px; }
+    .queue p { margin: 0; }
+    .queue .q-event { color: var(--dim); font-size: 13px; }
+    .queue .q-call { margin-top: 4px; font-size: 18px; font-weight: 700; }
+    .queue .q-call b { color: var(--focus); }
+    .queue .q-count { font-family: "Arial Black", Impact, sans-serif; color: var(--focus); font-size: 34px; line-height: 1; font-variant-numeric: tabular-nums; }
+    .queue ol { list-style: none; margin: 6px 0 0; padding: 0; color: var(--dim); font-size: 14px; }
+    .queue ol li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
+    .queue .go { margin-top: 8px; padding: 8px 14px; min-height: 44px; }
+    body.event .worker { left: 28px; bottom: auto; top: 22px; }
     @media (max-width: 720px), (max-height: 520px) {
       .dock {
         left: max(8px, env(safe-area-inset-left));
@@ -172,13 +195,12 @@
       .dock label { margin-bottom: 10px; }
       .dock label span { margin-bottom: 3px; font-size: 12px; }
       .dock input:not([type="checkbox"]) { padding: 4px 0 6px; font-size: 18px; }
-      .consent { margin-bottom: 12px; }
       .go { min-height: 48px; padding: 11px 20px; }
-      #boothqr {
-        width: min(46vw, 180px);
-        height: min(46vw, 180px);
-        margin: 8px auto;
-      }
+      .queue { left: max(8px, env(safe-area-inset-left)); bottom: max(8px, env(safe-area-inset-bottom)); padding: 8px; gap: 8px; }
+      .queue img { width: 84px; height: 84px; }
+      .queue.big img { width: min(46vw, 180px); height: min(46vw, 180px); }
+      .queue .q-call { font-size: 15px; }
+      .queue .q-count { font-size: 26px; }
       .result {
         width: calc(100vw - 24px);
         max-height: calc(100dvh - 32px);
@@ -211,7 +233,6 @@
         width: min(390px, 52vw);
       }
       .dock p { display: none; }
-      #boothqr { width: 112px; height: 112px; }
       .result { width: min(560px, calc(100vw - 32px)); }
     }
     @media (prefers-reduced-motion: reduce) {
@@ -227,20 +248,17 @@
   <form class="dock" id="join">
     <h1>Kill the worker</h1>
     <p id="pitch">Fly Ziggy's pod-ship through the cluster. Tap to climb. A wreck deletes the worker running your flight. The clock does not stop while Kubernetes schedules a replacement.</p>
-    <div id="booth" class="hidden">
-      <img id="boothqr" alt="Scan to join this event" width="220" height="220">
-      <p id="boothname"></p>
-      <label><span>Flight code</span><input id="code" name="code" type="text" inputmode="numeric" maxlength="4" autocomplete="off" spellcheck="false"></label>
-    </div>
-    <div id="checkin" class="hidden">
-      <label><span>Event</span><select id="events"></select></label>
-      <button class="go" id="checkin-go" type="button">Open this event</button>
+    <div id="host" class="host hidden">
+      <h2>Run this booth for an event</h2>
+      <label><span>Event title</span><input id="eventname" type="text" maxlength="120" autocomplete="off"></label>
+      <button class="go" id="host-go" type="button">Start an event</button>
+      <p class="err" id="hosterr" role="status"></p>
+      <ul id="opened"></ul>
     </div>
     <label><span>Email</span><input id="email" name="email" type="email" autocomplete="email" required maxlength="120"></label>
     <p class="back" id="back"></p>
     <label><span>Name</span><input id="name" name="name" type="text" autocomplete="name" maxlength="80"></label>
     <label><span>Title</span><input id="title" name="title" type="text" autocomplete="organization-title" maxlength="80"></label>
-    <label class="consent"><input id="consent" type="checkbox"> You can reach me about the prize.</label>
     <button class="go" id="start" type="submit">Start flying</button>
     <p class="err" id="err" role="status"></p>
   </form>
@@ -253,6 +271,17 @@
     <p id="finalcopy"></p>
     <p id="again">Next flight in 8</p>
   </div>
+
+  <aside class="queue hidden" id="queue" aria-live="polite">
+    <img id="queueqr" alt="Scan to join the queue" width="132" height="132">
+    <div>
+      <p class="q-event" id="queueevent"></p>
+      <p class="q-call" id="queuecall">Scan to fly</p>
+      <p class="q-count hidden" id="queuecount"></p>
+      <button class="go hidden" id="queuego" type="button">Start flight</button>
+      <ol id="queuenext"></ol>
+    </div>
+  </aside>
 
   <aside class="board" id="board">
     <h2>Standings</h2>
@@ -416,7 +445,18 @@
     }
     addEventListener("pointerdown", flap);
     addEventListener("keydown", (ev) => {
-      if (ev.code === "Space" || ev.code === "ArrowUp") flap(ev);
+      const key = ev.code === "Space" || ev.code === "Enter" || ev.code === "NumpadEnter" || ev.code === "ArrowUp";
+      if (!key || (ev.target.closest && ev.target.closest("input, textarea, select"))) return;
+      if (flight.mode === "flying") {
+        flap(ev);
+        return;
+      }
+      // The press that starts a turn doesn't also flap: the flight begins only
+      // once the server has started it.
+      if (eventId && queue.calling && flight.mode === "attract" && ev.code !== "ArrowUp" && !ev.repeat) {
+        ev.preventDefault();
+        startTurn();
+      }
     });
 
     function hit(bar) {
@@ -1630,8 +1670,7 @@
       document.querySelector("#title").value = "";
       document.querySelector("#email").value = "";
       document.querySelector("#back").textContent = "";
-      document.querySelector("#consent").checked = false;
-      if (!boardOnly) document.querySelector("#join").classList.remove("hidden");
+      if (!boardOnly && !eventId) document.querySelector("#join").classList.remove("hidden");
       const seconds = meta.durationSeconds || 60;
       document.querySelector("#time").textContent = Math.floor(seconds / 60) + ":" + String(seconds % 60).padStart(2, "0");
       document.querySelector("#time").style.color = "";
@@ -1642,7 +1681,7 @@
 
     async function pollBoard() {
       try {
-        const res = await fetch("/api/leaderboard");
+        const res = await fetch("/api/leaderboard" + (eventId ? "?event=" + eventId : ""));
         if (!res.ok) return;
         const rows = await res.json();
         const list = document.querySelector("#standings");
@@ -1708,7 +1747,12 @@
       if (meta.runtime === "process") return "Waiting for a new worker process… the clock is still running.";
       return "Waiting for the Kubernetes scheduler… the clock is still running.";
     }
-    function codeMode() { return !document.querySelector("#booth").classList.contains("hidden"); }
+    const eventId = (location.pathname.match(/^\/event\/([a-f0-9]{8})\/?$/) || [])[1] || "";
+    // The screen drives each turn: call the next person, count down, then start
+    // their flight or skip them. Nobody is called while no screen is open.
+    const CALL_SECONDS = 20;
+    const queue = { calling: null, deadline: 0, busy: false, view: null };
+
     document.querySelector("#join").addEventListener("submit", async (ev) => {
       ev.preventDefault();
       const err = document.querySelector("#err");
@@ -1716,24 +1760,17 @@
       err.textContent = "";
       btn.disabled = true;
       try {
-        let payload;
-        if (codeMode()) {
-          payload = { flightCode: document.querySelector("#code").value.trim(), eventId: flight.eventId };
-        } else {
-          if (!document.querySelector("#name").value.trim() || !document.querySelector("#title").value.trim()) {
-            await recallPlayer();
-          }
-          payload = {
-            name: document.querySelector("#name").value,
-            title: document.querySelector("#title").value,
-            email: document.querySelector("#email").value,
-            consent: document.querySelector("#consent").checked,
-          };
+        if (!document.querySelector("#name").value.trim() || !document.querySelector("#title").value.trim()) {
+          await recallPlayer();
         }
         const res = await fetch("/api/play", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify(payload),
+          body: JSON.stringify({
+            name: document.querySelector("#name").value,
+            title: document.querySelector("#title").value,
+            email: document.querySelector("#email").value,
+          }),
         });
         const body = await res.json();
         if (!res.ok) {
@@ -1741,48 +1778,167 @@
           btn.disabled = false;
           return;
         }
-        const s = body.state;
-        flight.sessionId = body.sessionId;
-        flight.seed = parseInt(String(s.seed || body.sessionId).slice(0, 8), 16) >>> 0;
-        flight.score = 0;
-        flight.acked = 0;
-        flight.crashes = 0;
-        flight.personalBest = body.personalBest || 0;
-        flight.gamesPlayed = body.gamesPlayed || 0;
-        flight.oomCount = 0;
-        flight.oomNext = 12;
-        flight.lived = 0;
-        flight.pressure = 0;
-        flight.restartCount = 0;
-        flight.boosters = false;
-        flight.boosterDeploy = 0;
-        flight.boosterFlash = 0;
-        flight.solar = false;
-        flight.solarDeploy = 0;
-        flight.treats = 0;
-        flight.treat = null;
-        flight.perk = null;
-        flight.standbys = 0;
-        flight.standbyRescue = false;
-        flight.standbyLeft = 0;
-        flight.pops = [];
-        flight.restartWave = null;
-        flight.restartDone = false;
-        flight.duration = meta.durationSeconds || 60;
-        if (s.deadline) flight.deadline = Date.parse(s.deadline);
-        if (s.workerPod) {
-          flight.worker = s.workerPod;
-          document.querySelector("#worker").textContent = s.workerPod;
-        }
-        document.querySelector("#join").classList.add("hidden");
-        flight.mode = "flying";
-        armCourse();
-        startBed();
+        beginFlight(body);
       } catch (e) {
         err.textContent = "The booth could not reach the game.";
         btn.disabled = false;
       }
     });
+
+    function beginFlight(body) {
+      const s = body.state;
+      flight.sessionId = body.sessionId;
+      flight.seed = parseInt(String(s.seed || body.sessionId).slice(0, 8), 16) >>> 0;
+      flight.score = 0;
+      flight.acked = 0;
+      flight.crashes = 0;
+      flight.personalBest = body.personalBest || 0;
+      flight.gamesPlayed = body.gamesPlayed || 0;
+      flight.oomCount = 0;
+      flight.oomNext = 12;
+      flight.lived = 0;
+      flight.pressure = 0;
+      flight.restartCount = 0;
+      flight.boosters = false;
+      flight.boosterDeploy = 0;
+      flight.boosterFlash = 0;
+      flight.solar = false;
+      flight.solarDeploy = 0;
+      flight.treats = 0;
+      flight.treat = null;
+      flight.perk = null;
+      flight.standbys = 0;
+      flight.standbyRescue = false;
+      flight.standbyLeft = 0;
+      flight.pops = [];
+      flight.restartWave = null;
+      flight.restartDone = false;
+      flight.duration = meta.durationSeconds || 60;
+      if (s.deadline) flight.deadline = Date.parse(s.deadline);
+      if (s.workerPod) {
+        flight.worker = s.workerPod;
+        document.querySelector("#worker").textContent = s.workerPod;
+      }
+      document.querySelector("#join").classList.add("hidden");
+      flight.mode = "flying";
+      armCourse();
+      startBed();
+      paintQueue();
+    }
+
+    async function postQueue(path, body) {
+      const res = await fetch("/api/booth-events/" + eventId + path, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body || {}),
+      });
+      const out = await res.json().catch(() => ({}));
+      return { ok: res.ok, status: res.status, body: out };
+    }
+
+    async function pollQueue() {
+      try {
+        const res = await fetch("/api/booth-events/" + eventId);
+        if (res.ok) queue.view = await res.json();
+      } catch (e) { /* keep the last view */ }
+      paintQueue();
+      driveTurn();
+    }
+
+    // driveTurn asks for the next person whenever no flight is running.
+    async function driveTurn() {
+      if (queue.busy || queue.calling || flight.mode !== "attract") return;
+      if (!queue.view || queue.view.closing || (!queue.view.queue.length && !queue.view.current)) return;
+      queue.busy = true;
+      try {
+        const res = await postQueue("/next");
+        if (res.ok && res.body.called) {
+          queue.calling = res.body.called;
+          queue.deadline = Date.now() + CALL_SECONDS * 1000;
+        }
+      } catch (e) { /* the next poll tries again */ }
+      queue.busy = false;
+      paintQueue();
+    }
+
+    async function startTurn() {
+      if (queue.busy || !queue.calling) return;
+      queue.busy = true;
+      const called = queue.calling;
+      document.querySelector("#queuecall").innerHTML = "Starting <b></b>…";
+      document.querySelector("#queuecall b").textContent = called.name;
+      document.querySelector("#queuecount").classList.add("hidden");
+      try {
+        const res = await postQueue("/turn", { entryId: called.entryId });
+        queue.calling = null;
+        if (res.ok) beginFlight(res.body);
+      } catch (e) {
+        queue.calling = null;
+      }
+      queue.busy = false;
+      paintQueue();
+    }
+
+    async function skipTurn() {
+      if (queue.busy || !queue.calling) return;
+      queue.busy = true;
+      const called = queue.calling;
+      try {
+        await postQueue("/skip", { entryId: called.entryId });
+      } catch (e) { /* the workflow still holds them; the next call returns them */ }
+      queue.calling = null;
+      queue.busy = false;
+      pollQueue();
+    }
+
+    function tickQueue() {
+      if (!eventId || !queue.calling || queue.busy) return;
+      const left = Math.ceil((queue.deadline - Date.now()) / 1000);
+      if (left <= 0) {
+        skipTurn();
+        return;
+      }
+      document.querySelector("#queuecount").textContent = String(left);
+    }
+
+    function paintQueue() {
+      if (!eventId) return;
+      const panel = document.querySelector("#queue");
+      const v = queue.view || { queue: [] };
+      panel.classList.remove("hidden");
+      document.querySelector("#queueevent").textContent = v.name || "";
+      const call = document.querySelector("#queuecall");
+      const count = document.querySelector("#queuecount");
+      const go = document.querySelector("#queuego");
+      const calling = queue.calling && !queue.busy;
+      if (v.closing) {
+        call.textContent = "This event has closed";
+      } else if (calling) {
+        call.innerHTML = "Up next: <b></b> · press Enter or Space";
+        call.querySelector("b").textContent = queue.calling.name;
+      } else if (!queue.busy) {
+        call.textContent = flight.mode === "attract" ? "Scan to fly" : "Scan to join the line";
+      }
+      count.classList.toggle("hidden", !calling);
+      go.classList.toggle("hidden", !calling);
+      const next = document.querySelector("#queuenext");
+      next.innerHTML = "";
+      const waiting = (v.queue || []).filter((e) => !queue.calling || e.entryId !== queue.calling.entryId);
+      waiting.slice(0, 3).forEach((e) => {
+        const li = document.createElement("li");
+        li.textContent = e.name;
+        next.appendChild(li);
+      });
+      if (waiting.length > 3) {
+        const li = document.createElement("li");
+        li.textContent = "+" + (waiting.length - 3) + " more";
+        next.appendChild(li);
+      }
+      // Big while nobody is flying or waiting, so people across the aisle can scan it.
+      panel.classList.toggle("big", flight.mode === "attract" && !queue.calling && !waiting.length && !v.current);
+      tickQueue();
+    }
+    document.querySelector("#queuego").addEventListener("click", startTurn);
 
     async function boot() {
       try {
@@ -1802,58 +1958,84 @@
         document.querySelector("#board").style.bottom = "auto";
         document.querySelector("#board").style.width = "auto";
       }
-      try {
-        const boothRes = await fetch("/api/kiosk");
-        if (boothRes.ok) await prepareBooth(await boothRes.json());
-      } catch (e) { /* the local form still starts a flight */ }
+      if (eventId) {
+        document.body.classList.add("event");
+        document.querySelector("#join").classList.add("hidden");
+        document.querySelector("#queueqr").src = "/api/booth-events/" + eventId + "/qr.png";
+        pollQueue();
+        setInterval(pollQueue, 1000);
+        setInterval(tickQueue, 250);
+      } else {
+        try {
+          const boothRes = await fetch("/api/kiosk");
+          if (boothRes.ok) await prepareHost(await boothRes.json());
+        } catch (e) { /* the local form still starts a flight */ }
+      }
       pollBoard();
       setInterval(pollBoard, 2000);
       setInterval(pollSession, 400);
     }
-    function eventSlug() {
-      const match = location.pathname.match(/^\/event\/([^/]+)\/?$/);
-      return match ? decodeURIComponent(match[1]) : "";
+
+    // A signed-in employee at the open booth can start an event, or put this
+    // screen back on one the booth already opened.
+    async function prepareHost(booth) {
+      if (!booth.employee || !booth.leads) return;
+      document.querySelector("#host").classList.remove("hidden");
+      const res = await fetch("/api/booth-events");
+      if (!res.ok) return;
+      const list = document.querySelector("#opened");
+      list.innerHTML = "";
+      (await res.json()).forEach((event) => {
+        const li = document.createElement("li");
+        const link = document.createElement("a");
+        link.href = "/event/" + encodeURIComponent(event.id);
+        link.textContent = event.name || event.id;
+        const close = document.createElement("button");
+        close.type = "button";
+        close.textContent = "Close";
+        close.addEventListener("click", async () => {
+          close.disabled = true;
+          const r = await fetch("/api/booth-events/" + encodeURIComponent(event.id) + "/close", { method: "POST" });
+          if (r.ok) li.remove();
+          else close.disabled = false;
+        });
+        li.append(link, close);
+        list.appendChild(li);
+      });
     }
-    function showEventBooth(event) {
-      flight.eventId = event.id || event.eventId || "";
-      document.querySelector("#booth").classList.remove("hidden");
-      document.querySelector("#boothname").textContent = event.name || event.eventName || flight.eventId;
-      if (event.qrURL) document.querySelector("#boothqr").src = event.qrURL;
-      else document.querySelector("#boothqr").classList.add("hidden");
-      document.querySelector("#pitch").textContent = "Scan the code, finish the form on your phone, then enter the 4-digit flight code.";
-      for (const id of ["email", "name", "title", "consent"]) {
-        document.querySelector("#" + id).closest("label").classList.add("hidden");
-      }
-      document.querySelector("#email").required = false;
-      document.querySelector("#back").classList.add("hidden");
-      document.querySelector("#checkin").classList.add("hidden");
-    }
-    async function prepareBooth(booth) {
-      const slug = eventSlug();
-      if (slug) {
-        const res = await fetch("/api/events/" + encodeURIComponent(slug));
-        if (res.ok) showEventBooth(await res.json());
+    async function hostEvent() {
+      const name = document.querySelector("#eventname").value.trim();
+      const err = document.querySelector("#hosterr");
+      const btn = document.querySelector("#host-go");
+      err.textContent = "";
+      if (!name) {
+        err.textContent = "Give the event a title.";
         return;
       }
-      if (!booth.employee) return;
-      const res = await fetch("/api/kiosk/events");
-      if (!res.ok) return;
-      const events = await res.json();
-      const select = document.querySelector("#events");
-      select.innerHTML = "";
-      events.forEach((event) => {
-        const option = document.createElement("option");
-        option.value = event.id;
-        option.textContent = event.name || event.id;
-        select.appendChild(option);
-      });
-      if (!events.length) return;
-      document.querySelector("#checkin").classList.remove("hidden");
-      document.querySelector("#pitch").textContent = "Open an event page. The front door stays the open booth.";
+      btn.disabled = true;
+      try {
+        const res = await fetch("/api/booth-events", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ name }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (res.ok) {
+          location.href = "/event/" + encodeURIComponent(body.id);
+          return;
+        }
+        err.textContent = body.error || "The event did not open.";
+      } catch (e) {
+        err.textContent = "The booth could not reach the event tracker.";
+      }
+      btn.disabled = false;
     }
-    document.querySelector("#checkin-go").addEventListener("click", () => {
-      const id = document.querySelector("#events").value;
-      if (id) location.href = "/event/" + encodeURIComponent(id);
+    document.querySelector("#host-go").addEventListener("click", hostEvent);
+    document.querySelector("#eventname").addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        hostEvent();
+      }
     });
     boot();
   </script>

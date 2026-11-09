@@ -6,13 +6,25 @@ import (
 	"strings"
 )
 
-//go:embed web/index.html web/assets/*
+//go:embed web/index.html web/join.html web/assets/*
 var web embed.FS
 
 func (s *Server) index(w http.ResponseWriter, _ *http.Request) {
 	body, err := web.ReadFile("web/index.html")
 	if err != nil {
 		http.Error(w, "booth page is missing", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(body)
+}
+
+// joinPage is the phone form behind the booth's QR code.
+func (s *Server) joinPage(w http.ResponseWriter, _ *http.Request) {
+	body, err := web.ReadFile("web/join.html")
+	if err != nil {
+		http.Error(w, "join page is missing", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

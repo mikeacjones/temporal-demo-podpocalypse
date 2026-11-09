@@ -2,8 +2,8 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
-	"strings"
 	"time"
 
 	"podpocalypse/internal/game"
@@ -41,7 +41,8 @@ type Config struct {
 	AuthVerifyURL     string
 	PublicURL         string
 	LeadsEndpoint     string
-	LeadsURL          string
+	// DevAuthEmail stands in for catalog sign-in on a local booth only.
+	DevAuthEmail string
 }
 
 func FromEnv() (Config, error) {
@@ -69,7 +70,7 @@ func FromEnv() (Config, error) {
 		AuthVerifyURL:     os.Getenv("AUTH_VERIFY_URL"),
 		PublicURL:         os.Getenv("PUBLIC_URL"),
 		LeadsEndpoint:     os.Getenv("EVENT_LEADS_ENDPOINT"),
-		LeadsURL:          strings.TrimRight(os.Getenv("EVENT_LEADS_URL"), "/"),
+		DevAuthEmail:      os.Getenv("DEV_AUTH_EMAIL"),
 	}
 	if v := os.Getenv("RECOVERY_DELAY"); v != "" {
 		d, err := time.ParseDuration(v)
@@ -95,6 +96,9 @@ func FromEnv() (Config, error) {
 	default:
 		return Config{}, fmt.Errorf("RUNTIME must be process or kubernetes, got %q", cfg.Runtime)
 	}
+	if cfg.DevAuthEmail != "" && (cfg.AuthVerifyURL != "" || !localURL(cfg.PublicURL)) {
+		return Config{}, fmt.Errorf("DEV_AUTH_EMAIL needs a localhost PUBLIC_URL and no AUTH_VERIFY_URL")
+	}
 	if cfg.Role == RoleSession && cfg.TaskQueue == "" {
 		return Config{}, fmt.Errorf("TASK_QUEUE is required for a session worker")
 	}
@@ -109,4 +113,13 @@ func env(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func localURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }

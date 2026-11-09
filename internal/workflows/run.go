@@ -19,9 +19,10 @@ type RunInput struct {
 	Name             string
 	Title            string
 	Email            string
-	Consent          bool
 	Duration         time.Duration
 	ControlTaskQueue string
+	// LeaderboardID is the event's standings; empty is the open booth's.
+	LeaderboardID string
 }
 
 type RunResult struct {
@@ -75,7 +76,11 @@ func GameRunWorkflow(ctx workflow.Context, in RunInput) (RunResult, error) {
 		return RunResult{}, err
 	}
 
-	boardErr := workflow.SignalExternalWorkflow(ctx, names.LeaderboardWorkflowID, "", SignalSubmitScore, BoardEntry{
+	board := names.LeaderboardWorkflowID
+	if in.LeaderboardID != "" {
+		board = in.LeaderboardID
+	}
+	boardErr := workflow.SignalExternalWorkflow(ctx, board, "", SignalSubmitScore, BoardEntry{
 		SessionID:  session.SessionID,
 		PlayerID:   session.PlayerID,
 		Name:       in.Name,
@@ -108,7 +113,6 @@ func GameRunWorkflow(ctx workflow.Context, in RunInput) (RunResult, error) {
 		Name:       in.Name,
 		Title:      in.Title,
 		Email:      in.Email,
-		Consent:    in.Consent,
 		Score:      session.Score,
 		Crashes:    session.Crashes,
 		TimedOut:   session.TimedOut,

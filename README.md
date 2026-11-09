@@ -20,14 +20,17 @@ by wipics, released CC0.
 ## How the workflows are cut
 
 The booth process is the worker you do not kill. It polls `podpocalypse-control`
-and runs three workflows:
+and runs four workflows:
 
 - `GameRunWorkflow` (`run-<session>`) creates the session worker, starts the
   game as a child, then records the score and tears the worker down.
 - `PlayerWorkflow` (`player-<hash>`) is the person. The workflow ID is a hash
-  of the email. Name, title, email, consent, games played, and their single
+  of the email. Name, title, email, games played, and their single
   best score live here. The same email can start any number of fresh sessions.
-- `LeaderboardWorkflow` (`leaderboard`) is one long-lived workflow for the
+- `BoothEventWorkflow` (`booth-event-<id>`) is one event the booth opened:
+  the event in the tracker, and the queue of people who scanned its QR code.
+  See [Events and the queue](#events-and-the-queue).
+- `LeaderboardWorkflow` (`leaderboard`, or `leaderboard-<id>` for an event) is one long-lived workflow for the
   standings. It keeps one best entry per player and continue-as-news after a
   couple hundred scores.
 
@@ -51,6 +54,28 @@ spawns a child process per session and restarts it `RECOVERY_DELAY` after it
 exits. `RUNTIME=kubernetes` creates a one-replica Deployment per session and
 deletes the running pod.
 
+## Events and the queue
+
+A signed-in Temporal employee can start an event from the booth's front page,
+with only a title. The booth creates it in the event tracker over Nexus
+(`create_event` on the `EVENT_LEADS_ENDPOINT` endpoint), with a form of name,
+title, and email and an end date three days out. Edit it later in the tracker.
+
+The event's screen is `/event/<id>`. Its bottom-left corner shows a QR code to
+`/join/<id>`, where people enter name, title, and email on their phone and join
+the line. Each join is also their response in the tracker, one per person
+however often they join. A person holds one place, by email or by phone, and
+can join again once their flight ends.
+
+The screen drives the turns. When no flight is running it calls the next
+person (`call_next`), gives them 20 seconds to press Enter or Space
+(`start_turn`, which starts the flight as a child workflow), and otherwise
+removes them (`skip`). Nobody is called while no screen is open. The design is
+in [docs/event-queue.md](docs/event-queue.md).
+
+Locally, `DEV_AUTH_EMAIL` stands in for the catalog sign-in when `PUBLIC_URL`
+is a localhost address.
+
 ## Run it against the dev server, no cluster
 
 This is the path that does not need a registry or Temporal Cloud.
@@ -67,7 +92,7 @@ Open http://127.0.0.1:8080. The Temporal Web UI is http://127.0.0.1:8233.
 Set `TEMPORAL_UI_URL=http://127.0.0.1:8233` if you want the in-game link.
 
 Leads are appended to `LEAD_PATH` (one JSON object per finished game) and also
-kept on the player workflow. `GET /api/prize` returns the winner's email when
+kept on the player workflow. `GET /api/prize` (`?event=<id>` for an event) returns the winner's email when
 `ADMIN_TOKEN` is set and the request sends `Authorization: Bearer <token>`.
 Without the token the route is not there, so the booth network cannot list
 addresses. The public board shows name, title, and score.

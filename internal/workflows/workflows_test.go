@@ -258,7 +258,6 @@ func TestGameRunRecordsATimedOutVisit(t *testing.T) {
 		Name:             "Ada",
 		Title:            "SA",
 		Email:            "ada@temporal.io",
-		Consent:          true,
 		Duration:         time.Second,
 		ControlTaskQueue: "podpocalypse-control",
 	})
