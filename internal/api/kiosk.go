@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/mail"
 	"net/url"
 	"strings"
 	"time"
@@ -420,57 +419,4 @@ func (s *Server) requireEmployee(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	return true
-}
-
-func (s *Server) employee(r *http.Request) (string, error) {
-	if s.Config.DevAuthEmail != "" {
-		return s.Config.DevAuthEmail, nil
-	}
-	if s.Config.AuthVerifyURL == "" {
-		return "", nil
-	}
-	cookie, err := r.Cookie("temporal_demo_auth")
-	if err != nil || cookie.Value == "" || len(cookie.Value) > 8192 {
-		return "", nil
-	}
-	origin, err := url.Parse(s.Config.PublicURL)
-	if err != nil || origin.Host == "" || (origin.Scheme != "https" && origin.Scheme != "http") {
-		return "", errors.New("public url is not configured")
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-	defer cancel()
-	verify, err := http.NewRequestWithContext(ctx, http.MethodGet, s.Config.AuthVerifyURL, nil)
-	if err != nil {
-		return "", err
-	}
-	verify.AddCookie(&http.Cookie{Name: cookie.Name, Value: cookie.Value})
-	verify.Header.Set("X-Forwarded-Host", origin.Host)
-	verify.Header.Set("X-Forwarded-Proto", origin.Scheme)
-	verify.Header.Set("X-Forwarded-Method", r.Method)
-	verify.Header.Set("X-Forwarded-Uri", r.URL.RequestURI())
-	response, err := authClient.Do(verify)
-	if err != nil {
-		return "", err
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusNoContent {
-		return "", nil
-	}
-	subject := strings.TrimSpace(response.Header.Get("X-Temporal-Auth-Subject"))
-	email := response.Header.Get("X-Temporal-Auth-Email")
-	address, err := mail.ParseAddress(email)
-	if subject == "" || err != nil || address.Address != email || subject == "bootstrap-catalog-auth" {
-		return "", nil
-	}
-	local, domain, found := strings.Cut(email, "@")
-	if !found || local == "" || !strings.EqualFold(domain, "temporal.io") {
-		return "", nil
-	}
-	return strings.ToLower(email), nil
-}
-
-// authClient never follows redirects: the verifier answers 204 or not at all.
-var authClient = &http.Client{
-	Timeout:       3 * time.Second,
-	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strconv"
 	"time"
 
 	"podpocalypse/internal/game"
@@ -41,8 +42,16 @@ type Config struct {
 	AuthVerifyURL     string
 	PublicURL         string
 	LeadsEndpoint     string
-	// DevAuthEmail stands in for catalog sign-in on a local booth only.
+	// DevAuthEmail stands in for sign-in on a local booth only.
 	DevAuthEmail string
+	// The field demo platform's sign-in (FIELDKIT_*, set on every demo pod).
+	PlatformVerifyURL string
+	PlatformCookie    string
+	PlatformLoginURL  string
+	// TrustIdentityHeaders takes X-Temporal-Auth-Email on a request as the
+	// signed-in employee. Only safe behind the platform's edge, which strips
+	// client-sent X-Temporal-Auth-* on every route; the catalog's does not.
+	TrustIdentityHeaders bool
 }
 
 func FromEnv() (Config, error) {
@@ -71,6 +80,18 @@ func FromEnv() (Config, error) {
 		PublicURL:         os.Getenv("PUBLIC_URL"),
 		LeadsEndpoint:     os.Getenv("EVENT_LEADS_ENDPOINT"),
 		DevAuthEmail:      os.Getenv("DEV_AUTH_EMAIL"),
+		PlatformVerifyURL: os.Getenv("FIELDKIT_AUTH_VERIFY_URL"),
+		PlatformCookie:    os.Getenv("FIELDKIT_AUTH_COOKIE"),
+		PlatformLoginURL:  os.Getenv("FIELDKIT_LOGIN_URL"),
+	}
+	// On by default exactly where the platform's edge sets the headers.
+	cfg.TrustIdentityHeaders = cfg.PlatformVerifyURL != ""
+	if v := os.Getenv("TRUST_PLATFORM_IDENTITY_HEADERS"); v != "" {
+		trust, err := strconv.ParseBool(v)
+		if err != nil {
+			return Config{}, fmt.Errorf("TRUST_PLATFORM_IDENTITY_HEADERS: %w", err)
+		}
+		cfg.TrustIdentityHeaders = trust
 	}
 	if v := os.Getenv("RECOVERY_DELAY"); v != "" {
 		d, err := time.ParseDuration(v)
@@ -96,8 +117,8 @@ func FromEnv() (Config, error) {
 	default:
 		return Config{}, fmt.Errorf("RUNTIME must be process or kubernetes, got %q", cfg.Runtime)
 	}
-	if cfg.DevAuthEmail != "" && (cfg.AuthVerifyURL != "" || !localURL(cfg.PublicURL)) {
-		return Config{}, fmt.Errorf("DEV_AUTH_EMAIL needs a localhost PUBLIC_URL and no AUTH_VERIFY_URL")
+	if cfg.DevAuthEmail != "" && (cfg.AuthVerifyURL != "" || cfg.PlatformVerifyURL != "" || !localURL(cfg.PublicURL)) {
+		return Config{}, fmt.Errorf("DEV_AUTH_EMAIL needs a localhost PUBLIC_URL and no AUTH_VERIFY_URL or FIELDKIT_AUTH_VERIFY_URL")
 	}
 	if cfg.Role == RoleSession && cfg.TaskQueue == "" {
 		return Config{}, fmt.Errorf("TASK_QUEUE is required for a session worker")

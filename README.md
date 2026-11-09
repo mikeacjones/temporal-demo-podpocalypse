@@ -73,8 +73,22 @@ person (`call_next`), gives them 20 seconds to press Enter or Space
 removes them (`skip`). Nobody is called while no screen is open. The design is
 in [docs/event-queue.md](docs/event-queue.md).
 
-Locally, `DEV_AUTH_EMAIL` stands in for the catalog sign-in when `PUBLIC_URL`
-is a localhost address.
+Sign-in comes from wherever the booth runs:
+
+- **Field demo platform.** The platform sets `FIELDKIT_AUTH_VERIFY_URL`,
+  `FIELDKIT_AUTH_COOKIE` and `FIELDKIT_LOGIN_URL` on every demo pod. With the
+  host on `auth: optional`, a signed-in employee's requests carry
+  `X-Temporal-Auth-Email`, which the booth trusts
+  (`TRUST_PLATFORM_IDENTITY_HEADERS`, on by default when
+  `FIELDKIT_AUTH_VERIFY_URL` is set, because the platform's edge strips
+  client-sent copies). Without the header, the booth asks the verifier with the
+  request's `Cookie` header. The screen shows no sign-in link, since attendees
+  use it; an employee opens `/signin`, which goes through the platform's sign-in
+  and back to the booth.
+- **tmprl-demo.cloud catalog.** `AUTH_VERIFY_URL` and the `temporal_demo_auth`
+  cookie, as before.
+- **Locally.** `DEV_AUTH_EMAIL` stands in for sign-in when `PUBLIC_URL` is a
+  localhost address.
 
 ## Run it against the dev server, no cluster
 
