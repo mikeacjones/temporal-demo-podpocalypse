@@ -123,6 +123,20 @@
       color: var(--dim); font-size: 13px; font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
     }
 
+    /* Shown only while nobody is flying. Centred in the space between the
+       join form (which ends 408px from the left) and the clock; an event has
+       no form, so there it is centred on the screen. */
+    .prize {
+      position: fixed; left: calc(50% + 204px); top: 18px; z-index: 4;
+      transform: translateX(-50%);
+      max-width: calc(100vw - 600px);
+      padding: 8px 22px 10px;
+      background-image: linear-gradient(45deg, #b664ff 0%, #444ce7 100%);
+      color: #fff; text-align: center;
+      font-family: "Arial Black", Impact, sans-serif;
+      font-size: clamp(22px, 3vw, 38px); line-height: 1.05; letter-spacing: -0.02em;
+    }
+
     .stamp {
       left: 50%; top: 42%; transform: translate(-50%, -50%) rotate(-8deg);
       padding: 10px 18px 14px; text-align: center;
@@ -182,6 +196,7 @@
     .queue ol li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
     .queue .go { margin-top: 8px; padding: 8px 14px; min-height: 44px; }
     body.event .worker { left: 28px; bottom: auto; top: 22px; }
+    body.event .prize { left: 50%; max-width: calc(100vw - 340px); }
     /* Live from the cluster: k9s and the flight's Event History, a strip along
        the bottom between the queue and the standings. It lines up with the QR
        panel beside it: same bottom, same height (set from the panel in
@@ -298,6 +313,7 @@
   <canvas id="shaft"></canvas>
   <div class="clock" id="clock"><i id="clockbar"></i></div>
   <div class="time" id="time">1:00</div>
+  <p class="prize" id="prize">Play to Win $100 Lego Gift Card!</p>
 
   <form class="dock" id="join">
     <h1>Kill the worker</h1>
@@ -1738,6 +1754,7 @@
       document.querySelector("#stamp").classList.add("hidden");
       document.querySelector("#result").classList.add("hidden");
       document.querySelector("#worker").textContent = "";
+      if (!boardOnly) document.querySelector("#prize").classList.remove("hidden");
       document.querySelector("#err").textContent = "";
       document.querySelector("#start").disabled = false;
       document.querySelector("#name").value = "";
@@ -2073,6 +2090,7 @@
         document.querySelector("#worker").textContent = s.workerPod;
       }
       document.querySelector("#join").classList.add("hidden");
+      document.querySelector("#prize").classList.add("hidden");
       flight.mode = "flying";
       armCourse();
       startBed();
@@ -2206,6 +2224,7 @@
       document.querySelector("#time").textContent = m + ":" + String(s).padStart(2, "0");
       if (boardOnly) {
         document.querySelector("#join").classList.add("hidden");
+        document.querySelector("#prize").classList.add("hidden");
         document.querySelector("#board").classList.add("show");
         document.querySelector("#board").style.left = "28px";
         document.querySelector("#board").style.right = "28px";
