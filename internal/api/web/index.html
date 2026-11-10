@@ -1884,8 +1884,9 @@
         if (!term) return;
         // Eight rows: k9s's info line, the table's borders and header, the
         // session pods (two while one is replaced), its status line, and one
-        // spare, since a cell is a little taller than its font size.
-        term.options.fontSize = Math.max(8, Math.min(14, Math.floor(termBox.clientHeight / 8 / 1.25)));
+        // spare, since a cell is a little taller than its font size. Then 15%
+        // smaller than that, so the table sits with room to spare.
+        term.options.fontSize = Math.max(8, Math.min(12, Math.floor(termBox.clientHeight / 8 / 1.25 * 0.85)));
         try { fit.fit(); } catch (e) { /* not laid out yet */ }
         if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
       }
