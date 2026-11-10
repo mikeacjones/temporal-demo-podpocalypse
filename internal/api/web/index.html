@@ -130,11 +130,11 @@
       position: fixed; left: calc(50% + 204px); top: 18px; z-index: 4;
       transform: translateX(-50%);
       max-width: calc(100vw - 600px);
-      padding: 8px 22px 10px;
+      padding: 10px 28px 13px;
       background-image: linear-gradient(45deg, #b664ff 0%, #444ce7 100%);
       color: #fff; text-align: center;
       font-family: "Arial Black", Impact, sans-serif;
-      font-size: clamp(22px, 3vw, 38px); line-height: 1.05; letter-spacing: -0.02em;
+      font-size: clamp(30px, 4.4vw, 56px); line-height: 1.05; letter-spacing: -0.02em;
     }
 
     .stamp {
@@ -414,8 +414,12 @@
       boosterFlash: 0,
       solar: false,
       solarDeploy: 0,
+      plasma: false,
       treats: 0,
       treat: null,
+      nextTreat: 4,
+      treatsOffered: 0,
+      bonusMs: 0,
       perk: null,
       standbys: 0,
       standbyRescue: false,
@@ -479,7 +483,9 @@
     }
     function scrollSpeed() {
       const stage = flight.solar ? 0.09 : (flight.boosters ? 0.03 : 0);
-      return courseW() * (0.2 + pressure() * 0.05 + stage);
+      // The plasma stage runs 30% faster than the inter-solar top speed.
+      const plasma = flight.plasma ? 1.3 : 1;
+      return courseW() * (0.2 + pressure() * 0.05 + stage) * plasma;
     }
     function enemyGap() { return 10 - pressure() * 6.6; }
 
@@ -684,6 +690,14 @@
         setTimeout(() => blip(1040, 0.12, "square"), 200);
         liftBed(0.3);
       }
+      if (!flight.plasma && flight.solar && flight.lived >= 75) {
+        flight.plasma = true;
+        flight.boosterFlash = 3;
+        blip(220, 0.2, "sawtooth");
+        setTimeout(() => blip(660, 0.16, "square"), 90);
+        setTimeout(() => blip(1320, 0.14, "square"), 200);
+        liftBed(0.36);
+      }
       if (flight.boosters) flight.boosterDeploy = Math.min(1, flight.boosterDeploy + dt * 2.2);
       if (flight.solar) flight.solarDeploy = Math.min(1, flight.solarDeploy + dt * 1.35);
       flight.boosterFlash = Math.max(0, flight.boosterFlash - dt);
@@ -756,11 +770,13 @@
       blip(520, 0.16, "triangle");
     }
 
+    // Treats never run out. The first four come every five columns, then
+    // each gap grows by one column, up to twelve.
     function offerTreat(bar) {
-      const max = meta.maxTreats || 4;
-      if (flight.treat || flight.treats >= max) return;
-      if (bar.index < 4 || bar.index % 5 !== 4) return;
+      if (flight.treat || bar.index < flight.nextTreat) return;
       flight.treat = { index: bar.index };
+      flight.treatsOffered++;
+      flight.nextTreat = bar.index + Math.min(12, 5 + Math.max(0, flight.treatsOffered - 4));
     }
 
     function treatSpot() {
@@ -777,14 +793,15 @@
       const dy = flight.pod.y - spot.y;
       const reach = flight.pod.r * 2.2 + 34;
       if (dx * dx + dy * dy > reach * reach) return;
-      flight.pops.push({ text: "+8s", x: spot.x, y: spot.y, life: 1 });
       flight.treat = null;
       flight.treatFlash = 1.2;
       blip(660, 0.12, "triangle");
-      postTreat(flight.treats + 1);
+      postTreat(flight.treats + 1, spot);
     }
 
-    async function postTreat(treat) {
+    // The session workflow picks how much time the treat adds, so the pop
+    // waits for its answer.
+    async function postTreat(treat, spot) {
       if (!flight.sessionId || flight.treatSending) return;
       flight.treatSending = true;
       try {
@@ -796,7 +813,11 @@
         if (res.ok) {
           const body = await res.json();
           flight.treats = body.treats;
+          if (body.state && typeof body.state.bonusMs === "number") flight.bonusMs = Math.max(flight.bonusMs, body.state.bonusMs);
           if (body.deadline) flight.deadline = Date.parse(body.deadline);
+          if (body.bonusMs && flight.mode !== "attract") {
+            flight.pops.push({ text: "+" + Math.round(body.bonusMs / 1000) + "s", x: spot.x, y: spot.y, life: 1 });
+          }
         }
       } catch (e) { /* the next poll still carries the deadline */ }
       flight.treatSending = false;
@@ -929,10 +950,11 @@
       if (flight.boosterFlash > 0 && flight.mode === "flying") {
         ctx.save();
         ctx.globalAlpha = Math.min(1, flight.boosterFlash * 1.4);
-        ctx.fillStyle = flight.solar ? "#ffe7a3" : "#c3ff62";
+        ctx.fillStyle = flight.plasma ? "#a8d4ff" : (flight.solar ? "#ffe7a3" : "#c3ff62");
         ctx.font = "800 28px Noto Sans Mono, ui-monospace, Menlo, monospace";
         ctx.textAlign = "center";
-        ctx.fillText(flight.solar ? "INTER-SOLAR BOOSTER" : "TRIPLE BOOSTERS ONLINE", flight.w * 0.5, 72);
+        const banner = flight.plasma ? "PLASMA DRIVE ENGAGED" : (flight.solar ? "INTER-SOLAR BOOSTER" : "TRIPLE BOOSTERS ONLINE");
+        ctx.fillText(banner, flight.w * 0.5, 72);
         ctx.restore();
       }
       ctx.restore();
@@ -1387,7 +1409,8 @@
       const root = x - radius * 0.86;
       const flame = radius * flameScale * flicker;
       const span = radius * (hot ? 0.62 : 0.44);
-      ctx.fillStyle = hot ? "#ffb020" : "#64d8ff";
+      const plasma = hot === "plasma";
+      ctx.fillStyle = plasma ? "#2f7bff" : (hot ? "#ffb020" : "#64d8ff");
       ctx.beginPath();
       ctx.moveTo(root, y - span);
       ctx.lineTo(root - flame, y);
@@ -1395,7 +1418,7 @@
       ctx.closePath();
       ctx.fill();
       if (hot) {
-        ctx.fillStyle = "#fff6d0";
+        ctx.fillStyle = plasma ? "#ffffff" : "#fff6d0";
         ctx.beginPath();
         ctx.moveTo(root, y - span * 0.42);
         ctx.lineTo(root - flame * 0.62, y);
@@ -1413,7 +1436,8 @@
       ctx.rotate(tilt);
       if (flight.invuln > 0 && Math.floor(flight.invuln * 12) % 2 === 0) ctx.globalAlpha = 0.45;
 
-      // Triple boosters, then one huge inter-solar engine in the last stretch.
+      // Triple boosters, then one huge inter-solar engine in the last stretch,
+      // whose flame burns blue-white once the plasma stage kicks in.
       const grow = flight.mode === "attract" ? 0 : flight.solarDeploy;
       const pack = flight.mode === "attract" ? 0 : flight.boosterDeploy * (1 - grow);
       if (pack > 0.04) {
@@ -1425,7 +1449,8 @@
       const centerR = r * (0.72 + grow * 1.15);
       const centerX = -r * (1.48 + grow * 1.28);
       const flame = grow > 0 ? 1.2 + grow * 2.5 : (flight.boosters ? 1.55 : 1.05);
-      drawRocketEngine(centerX, 0, centerR, flame, grow > 0.2);
+      const hot = grow > 0.2 && (flight.plasma && flight.mode !== "attract" ? "plasma" : true);
+      drawRocketEngine(centerX, 0, centerR, flight.plasma && flight.mode !== "attract" ? flame * 1.15 : flame, hot);
 
       ctx.fillStyle = "#444ce7";
       roundRect(-r * 1.15, -r * 0.78, r * 3.05, r * 1.56, r * 0.35);
@@ -1610,7 +1635,7 @@
 
     function paintClock() {
       const left = flight.deadline ? Math.max(0, (flight.deadline - Date.now()) / 1000) : flight.duration;
-      const total = (flight.duration || 60) + flight.treats * (meta.treatSeconds || 8);
+      const total = (flight.duration || 60) + flight.bonusMs / 1000;
       if (flight.treatFlash > 0) flight.treatFlash -= 0.016;
       const bar = document.querySelector("#clockbar");
       const clock = document.querySelector("#clock");
@@ -1656,6 +1681,7 @@
           if (!flight.deadline || next > flight.deadline) flight.deadline = next;
         }
         if (typeof s.treats === "number") flight.treats = Math.max(flight.treats, s.treats);
+        if (typeof s.bonusMs === "number") flight.bonusMs = Math.max(flight.bonusMs, s.bonusMs);
         if (s.workerPod) {
           flight.worker = s.workerPod;
           document.querySelector("#worker").textContent = s.workerPod;
@@ -1749,6 +1775,10 @@
       flight.boosterFlash = 0;
       flight.solar = false;
       flight.solarDeploy = 0;
+      flight.plasma = false;
+      flight.nextTreat = 4;
+      flight.treatsOffered = 0;
+      flight.bonusMs = 0;
       flight.oomNext = 12;
       resize();
       document.querySelector("#stamp").classList.add("hidden");
@@ -2074,6 +2104,10 @@
       flight.boosterFlash = 0;
       flight.solar = false;
       flight.solarDeploy = 0;
+      flight.plasma = false;
+      flight.nextTreat = 4;
+      flight.treatsOffered = 0;
+      flight.bonusMs = 0;
       flight.treats = 0;
       flight.treat = null;
       flight.perk = null;

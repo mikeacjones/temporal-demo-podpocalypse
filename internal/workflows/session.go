@@ -37,6 +37,7 @@ type PublicState struct {
 	Score           int       `json:"score"`
 	Crashes         int       `json:"crashes"`
 	Treats          int       `json:"treats"`
+	BonusMS         int64     `json:"bonusMs"`
 	Deadline        time.Time `json:"deadline"`
 	RecoveryStarted time.Time `json:"recoveryStarted,omitempty"`
 	RecoveryMS      int64     `json:"recoveryMs"`
@@ -60,6 +61,7 @@ type CrashResult struct {
 
 type TreatResult struct {
 	Treats   int         `json:"treats"`
+	BonusMS  int64       `json:"bonusMs"`
 	Deadline time.Time   `json:"deadline"`
 	State    PublicState `json:"state"`
 }
@@ -82,6 +84,7 @@ type sessionState struct {
 	score           int
 	crashes         int
 	treats          int
+	bonus           time.Duration
 	deadline        time.Time
 	lastGate        time.Time
 	lastTreat       time.Time
@@ -217,7 +220,7 @@ func (s *sessionState) validateTreat(ctx workflow.Context, treat int) error {
 	if s.finished || s.phase != "playing" {
 		return fmt.Errorf("not flying (%s)", s.phase)
 	}
-	if treat != s.treats+1 || treat > game.MaxTreats {
+	if treat != s.treats+1 {
 		return fmt.Errorf("treat %d is not available", treat)
 	}
 	if !s.lastTreat.IsZero() && workflow.Now(ctx).Sub(s.lastTreat) < game.TreatCooldown {
@@ -229,10 +232,12 @@ func (s *sessionState) validateTreat(ctx workflow.Context, treat int) error {
 func (s *sessionState) eatTreat(ctx workflow.Context, treat int) (TreatResult, error) {
 	s.treats = treat
 	s.lastTreat = workflow.Now(ctx)
-	s.deadline = s.deadline.Add(game.TreatBonus)
+	bonus := game.TreatBonus(s.in.SessionID, treat)
+	s.bonus += bonus
+	s.deadline = s.deadline.Add(bonus)
 	s.wake.SendAsync(struct{}{})
 	workflow.SetCurrentDetails(ctx, s.details())
-	return TreatResult{Treats: s.treats, Deadline: s.deadline, State: s.view(ctx)}, nil
+	return TreatResult{Treats: s.treats, BonusMS: bonus.Milliseconds(), Deadline: s.deadline, State: s.view(ctx)}, nil
 }
 
 func (s *sessionState) validateCrash() error {
@@ -322,6 +327,7 @@ func (s *sessionState) view(ctx workflow.Context) PublicState {
 		Score:           s.score,
 		Crashes:         s.crashes,
 		Treats:          s.treats,
+		BonusMS:         s.bonus.Milliseconds(),
 		Deadline:        s.deadline,
 		RecoveryStarted: s.recoveryStarted,
 		RecoveryMS:      s.recoveryTotal.Milliseconds(),

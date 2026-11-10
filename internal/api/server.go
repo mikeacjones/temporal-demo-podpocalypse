@@ -138,8 +138,6 @@ func (s *Server) meta(w http.ResponseWriter, _ *http.Request) {
 		"namespace":       s.Config.TemporalNamespace,
 		"durationSeconds": int(s.Config.GameDuration / time.Second),
 		"minGateMs":       int(game.MinGateInterval / time.Millisecond),
-		"treatSeconds":    int(game.TreatBonus / time.Second),
-		"maxTreats":       game.MaxTreats,
 		"runtime":         s.Config.Runtime,
 		"leads":           s.Config.LeadsEndpoint != "",
 		"k9s":             s.K9s != nil,

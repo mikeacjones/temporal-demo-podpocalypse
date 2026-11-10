@@ -11,6 +11,7 @@ import (
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/workflow"
 
+	"podpocalypse/internal/game"
 	"podpocalypse/internal/infra"
 )
 
@@ -122,6 +123,8 @@ func TestTreatPushesTheDeadline(t *testing.T) {
 	require.True(t, rejected)
 	require.Equal(t, "playing", mid.Phase)
 	require.Equal(t, 1, mid.Treats)
+	bonus := game.TreatBonus(in.SessionID, 1)
+	require.Equal(t, bonus.Milliseconds(), mid.BonusMS)
 	var result SessionResult
 	require.NoError(t, env.GetWorkflowResult(&result))
 	require.True(t, result.TimedOut)
