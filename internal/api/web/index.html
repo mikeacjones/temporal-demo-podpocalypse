@@ -344,7 +344,7 @@
 
   <section class="ops hidden" id="ops" aria-label="Live from the cluster">
     <div class="ops-pane k9s" id="k9spane">
-      <p class="ops-head"><span>k9s · pods</span><span id="k9snote">read-only</span></p>
+      <p class="ops-head"><span>k9s · session pods</span><span id="k9snote">read-only</span></p>
       <div class="term" id="term"></div>
     </div>
     <div class="ops-pane">
@@ -1881,9 +1881,9 @@
       // Enter stay with the game.
       function sizeTerm() {
         if (!term) return;
-        // Nine rows: k9s's info line, the table's borders and header, up to
-        // four pods (two while one is replaced), and its status line.
-        term.options.fontSize = Math.max(8, Math.min(13, Math.floor(termBox.clientHeight / 9 / 1.2)));
+        // Seven rows: k9s's info line, the table's borders and header, the
+        // session pods (two while one is replaced), and its status line.
+        term.options.fontSize = Math.max(8, Math.min(14, Math.floor(termBox.clientHeight / 7 / 1.2)));
         try { fit.fit(); } catch (e) { /* not laid out yet */ }
         if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
       }

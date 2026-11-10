@@ -140,6 +140,15 @@ func (a *Infra) currentUID(ctx context.Context, sessionID string) (string, error
 	return string(chosen.UID), nil
 }
 
+// SessionPodsSelector selects every session worker pod: each session's own
+// Deployment's pods, or on config.RuntimePod the shared session pod.
+func SessionPodsSelector(runtime, podSelector string) string {
+	if runtime == config.RuntimePod {
+		return podSelector
+	}
+	return appLabelKey + "=" + appLabelValue
+}
+
 // listSessionPods lists the pods running sessionID's worker: its own
 // Deployment's, or on config.RuntimePod the shared session pod, which every
 // session's crash deletes.

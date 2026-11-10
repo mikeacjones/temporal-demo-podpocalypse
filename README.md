@@ -70,7 +70,8 @@ step for now: see [deploy/catalog/README.md](deploy/catalog/README.md).
 During a flight a strip along the bottom, between the queue and the
 standings, shows two live views:
 
-- **k9s**, read-only, watching the booth's namespace. It appears only when the
+- **k9s**, read-only, filtered to the session worker pods, so the pod a crash
+  deletes and its replacement are the rows on screen. It appears only when the
   booth runs in a cluster with a mounted service account token
   (`RUNTIME=kubernetes` or `pod`; `K9S=off` turns it off). The page never
   sends k9s a keystroke, so Space and Enter stay with the game. Pod IPs and

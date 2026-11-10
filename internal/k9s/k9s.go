@@ -42,10 +42,12 @@ type Terminal struct {
 	active  atomic.Int32
 }
 
-// InCluster prepares k9s to watch namespace as the pod's own service account,
-// never a developer kubeconfig. It fails when the booth is not running in a
-// cluster with a mounted token, or k9s is not installed.
-func InCluster(namespace, workDir string) (*Terminal, error) {
+// InCluster prepares k9s to watch the pods in namespace that match selector
+// (the session worker pods, so the pod that dies is the one on screen), as
+// the pod's own service account, never a developer kubeconfig. It fails when
+// the booth is not running in a cluster with a mounted token, or k9s is not
+// installed.
+func InCluster(namespace, selector, workDir string) (*Terminal, error) {
 	cfg, err := rest.InClusterConfig()
 	if err != nil {
 		return nil, err
@@ -87,7 +89,8 @@ current-context: booth
 		return nil, fmt.Errorf("write kubeconfig: %w", err)
 	}
 	return &Terminal{
-		command: []string{bin, "--context", "booth", "-n", namespace, "-c", "pods", "--readonly",
+		// "pods <selector>" is k9s's command for a label-filtered pod view.
+		command: []string{bin, "--context", "booth", "-n", namespace, "-c", "pods " + selector, "--readonly",
 			"--headless", "--logoless", "--crumbsless", "--splashless", "--refresh", "1"},
 		env: []string{
 			"K9S_CONFIG_DIR=" + cfgDir,

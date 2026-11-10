@@ -110,7 +110,7 @@ func runBooth(c client.Client, cfg config.Config) error {
 	// The pod panel needs a cluster to show, so a process-runtime booth has none.
 	var podPanel http.Handler
 	if cfg.K9s && cfg.UsesKube() {
-		term, err := k9s.InCluster(cfg.KubeNamespace, os.TempDir())
+		term, err := k9s.InCluster(cfg.KubeNamespace, infra.SessionPodsSelector(cfg.Runtime, cfg.SessionPodSelector), os.TempDir())
 		if err != nil {
 			slog.Info("k9s panel off", "reason", err)
 		} else {
