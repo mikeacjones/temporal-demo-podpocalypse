@@ -1,0 +1,97 @@
+# Temporal-flavored k9s skin (temporal.io palette). Backgrounds are "default"
+# so the terminal's own background shows through, both in the dashboard's
+# embedded panel and in a regular terminal window.
+foreground: &foreground "#f8fafc"
+muted: &muted "#92a4c3"
+dim: &dim "#465a78"
+line: &line "#2c2d54"
+uv: &uv "#7f86f1"
+lavender: &lavender "#cacbf9"
+purple: &purple "#b664ff"
+green: &green "#1ff1a5"
+cyan: &cyan "#4fd8ff"
+yellow: &yellow "#fecb2f"
+pink: &pink "#ff6bff"
+red: &red "#ff5555"
+
+k9s:
+  body:
+    fgColor: *foreground
+    bgColor: default
+    logoColor: *purple
+  prompt:
+    fgColor: *foreground
+    bgColor: default
+    suggestColor: *uv
+  info:
+    fgColor: *uv
+    sectionColor: *foreground
+  dialog:
+    fgColor: *foreground
+    bgColor: default
+    buttonFgColor: *foreground
+    buttonBgColor: *uv
+    buttonFocusFgColor: "#141414"
+    buttonFocusBgColor: *green
+    labelFgColor: *yellow
+    fieldFgColor: *foreground
+  frame:
+    border:
+      fgColor: *dim
+      focusColor: *uv
+    menu:
+      fgColor: *foreground
+      keyColor: *green
+      numKeyColor: *green
+    crumbs:
+      fgColor: *foreground
+      bgColor: *line
+      activeColor: *uv
+    status:
+      newColor: *lavender      # normal rows (k9s also paints the selection bar with this)
+      modifyColor: *uv         # pod changed
+      addColor: *green         # rows k9s just saw appear: new pods flash green
+      errorColor: *red         # real errors only
+      highlightColor: *yellow
+      killColor: *muted        # terminating
+      completedColor: *muted
+    title:
+      fgColor: *foreground
+      bgColor: default
+      highlightColor: *green
+      counterColor: *purple
+      filterColor: *pink
+  views:
+    charts:
+      bgColor: default
+      defaultDialColors: [*uv, *pink]
+      defaultChartColors: [*uv, *pink]
+    table:
+      fgColor: *foreground
+      bgColor: default
+      # k9s v0.51 paints the selected row's background with the row color;
+      # keep its text dark so it stays readable.
+      cursorFgColor: "#141414"
+      cursorBgColor: *lavender
+      header:
+        fgColor: *muted
+        bgColor: default
+        sorterColor: *green
+    xray:
+      fgColor: *foreground
+      bgColor: default
+      cursorColor: *line
+      graphicColor: *uv
+      showIcons: false
+    yaml:
+      keyColor: *uv
+      colonColor: *muted
+      valueColor: *foreground
+    logs:
+      fgColor: *foreground
+      bgColor: default
+      indicator:
+        fgColor: *foreground
+        bgColor: *uv
+        toggleOnColor: *green
+        toggleOffColor: *muted

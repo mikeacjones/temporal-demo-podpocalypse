@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"podpocalypse/internal/config"
 	"podpocalypse/internal/dialer"
 	"podpocalypse/internal/infra"
+	"podpocalypse/internal/k9s"
 	"podpocalypse/internal/names"
 	"podpocalypse/internal/workflows"
 )
@@ -62,9 +64,15 @@ func main() {
 }
 
 func runSession(c client.Client, cfg config.Config) error {
-	opts := worker.Options{}
-	if cfg.PodName != "" {
-		opts.Identity = cfg.PodName
+	// The worker's identity is its pod's name, so Event History shows which
+	// pod ran each task. A pod's hostname is its name when POD_NAME is unset.
+	opts := worker.Options{Identity: cfg.PodName}
+	if opts.Identity == "" {
+		host, err := os.Hostname()
+		if err != nil {
+			return err
+		}
+		opts.Identity = host
 	}
 	w := worker.New(c, cfg.TaskQueue, opts)
 	w.RegisterWorkflow(workflows.GameSessionWorkflow)
@@ -87,6 +95,8 @@ func runBooth(c client.Client, cfg config.Config) error {
 		TemporalTLSServer: cfg.TemporalTLSServer,
 		LeadPath:          cfg.LeadPath,
 		RecoveryDelay:     cfg.RecoveryDelay,
+		SessionQueue:      cfg.SessionQueue,
+		PodSelector:       cfg.SessionPodSelector,
 	}
 	if cfg.Runtime == config.RuntimeProcess {
 		acts.Supervisor = &infra.Supervisor{Delay: cfg.RecoveryDelay, BaseEnv: os.Environ()}
@@ -96,6 +106,16 @@ func runBooth(c client.Client, cfg config.Config) error {
 			return err
 		}
 		acts.Kube = kube
+	}
+	// The pod panel needs a cluster to show, so a process-runtime booth has none.
+	var podPanel http.Handler
+	if cfg.K9s && cfg.UsesKube() {
+		term, err := k9s.InCluster(cfg.KubeNamespace, os.TempDir())
+		if err != nil {
+			slog.Info("k9s panel off", "reason", err)
+		} else {
+			podPanel = term
+		}
 	}
 
 	w := worker.New(c, cfg.ControlQueue, worker.Options{})
@@ -125,13 +145,18 @@ func runBooth(c client.Client, cfg config.Config) error {
 		go reapLoop(interrupt, acts)
 	}
 
+	// Streams (Event History, k9s) hold requests open; ending this context on
+	// shutdown lets srv.Shutdown drain them instead of waiting out its deadline.
+	base, endStreams := context.WithCancel(context.Background())
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           (&api.Server{Client: c, Config: cfg}).Handler(),
+		Handler:           (&api.Server{Client: c, Config: cfg, K9s: podPanel}).Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
+		BaseContext:       func(net.Listener) context.Context { return base },
 	}
 	go func() {
 		<-interrupt
+		endStreams()
 		if acts.Supervisor != nil {
 			acts.Supervisor.StopAll()
 		}

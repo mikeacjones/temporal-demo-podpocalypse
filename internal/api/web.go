@@ -50,6 +50,12 @@ func assetType(name string) string {
 		return "audio/mpeg"
 	case strings.HasSuffix(name, ".png"):
 		return "image/png"
+	case strings.HasSuffix(name, ".js"):
+		return "text/javascript; charset=utf-8"
+	case strings.HasSuffix(name, ".css"):
+		return "text/css; charset=utf-8"
+	case strings.HasSuffix(name, ".txt"):
+		return "text/plain; charset=utf-8"
 	default:
 		return "application/octet-stream"
 	}

@@ -24,7 +24,11 @@ import (
 type Server struct {
 	Client client.Client
 	Config config.Config
-	views  *viewCache
+	// K9s, when set, serves the read-only pod panel at /api/k9s.
+	K9s http.Handler
+
+	views        *viewCache
+	historySlots chan struct{}
 }
 
 // PlayRequest starts a flight at the open booth. Entering your details to
@@ -38,6 +42,7 @@ type PlayRequest struct {
 
 func (s *Server) Handler() http.Handler {
 	s.views = newViewCache(time.Second)
+	s.historySlots = make(chan struct{}, maxHistoryStreams)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.HandleFunc("GET /api/meta", s.meta)
@@ -59,6 +64,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{id}/gates", s.gate)
 	mux.HandleFunc("POST /api/sessions/{id}/treats", s.treat)
 	mux.HandleFunc("POST /api/sessions/{id}/crash", s.crash)
+	mux.HandleFunc("GET /api/sessions/{id}/history", s.sessionHistory)
+	if s.K9s != nil {
+		mux.Handle("GET /api/k9s", s.K9s)
+	}
 	mux.HandleFunc("GET /api/leaderboard", s.leaderboard)
 	mux.HandleFunc("GET /api/prize", s.prize)
 	mux.HandleFunc("GET /assets/{name}", s.asset)
@@ -132,6 +141,7 @@ func (s *Server) meta(w http.ResponseWriter, _ *http.Request) {
 		"maxTreats":       game.MaxTreats,
 		"runtime":         s.Config.Runtime,
 		"leads":           s.Config.LeadsEndpoint != "",
+		"k9s":             s.K9s != nil,
 	})
 }
 
@@ -382,7 +392,7 @@ func (s *Server) leaderboard(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	val, err := s.Client.QueryWorkflow(ctx, boardID(r), "", workflows.QueryBoard)
 	if err != nil {
-		writeJSON(w, http.StatusOK, []workflows.BoardEntry{})
+		writeJSON(w, http.StatusOK, []PublicEntry{})
 		return
 	}
 	var board []workflows.BoardEntry
@@ -390,10 +400,30 @@ func (s *Server) leaderboard(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadGateway, "leaderboard could not be read")
 		return
 	}
-	if board == nil {
-		board = []workflows.BoardEntry{}
+	writeJSON(w, http.StatusOK, publicBoard(board))
+}
+
+// PublicEntry is a standings row as the booth screen shows it: first name
+// and score. Titles and full names stay on the player workflow.
+type PublicEntry struct {
+	Name    string `json:"name"`
+	Score   int    `json:"score"`
+	Crashes int    `json:"crashes"`
+}
+
+func publicBoard(board []workflows.BoardEntry) []PublicEntry {
+	out := make([]PublicEntry, 0, len(board))
+	for _, e := range board {
+		out = append(out, PublicEntry{Name: firstName(e.Name), Score: e.Score, Crashes: e.Crashes})
 	}
-	writeJSON(w, http.StatusOK, board)
+	return out
+}
+
+func firstName(name string) string {
+	if fields := strings.Fields(name); len(fields) > 0 {
+		return fields[0]
+	}
+	return ""
 }
 
 func (s *Server) prize(w http.ResponseWriter, r *http.Request) {

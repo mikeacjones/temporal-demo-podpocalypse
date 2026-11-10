@@ -3,6 +3,8 @@ module podpocalypse
 go 1.27.1
 
 require (
+	github.com/coder/websocket v1.8.15
+	github.com/creack/pty v1.1.24
 	github.com/nexus-rpc/sdk-go v0.5.1
 	github.com/stretchr/testify v1.11.1
 	go.temporal.io/api v1.54.0

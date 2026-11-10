@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/sdk/testsuite"
+	"go.temporal.io/sdk/workflow"
 
 	"podpocalypse/internal/infra"
 )
@@ -248,7 +249,7 @@ func TestGameRunRecordsATimedOutVisit(t *testing.T) {
 	env.RegisterActivity(&infra.SessionActivities{})
 	env.RegisterWorkflow(GameSessionWorkflow)
 	var acts *infra.Infra
-	env.OnActivity(acts.ProvisionSessionWorker, mock.Anything, mock.Anything).Return(nil)
+	env.OnActivity(acts.ProvisionSessionWorker, mock.Anything, mock.Anything).Return(infra.ProvisionResult{}, nil)
 	env.OnActivity(acts.TeardownSessionWorker, mock.Anything, mock.Anything).Return(nil)
 	env.OnActivity(acts.AppendLead, mock.Anything, mock.Anything).Return(nil)
 	env.OnSignalExternalWorkflow(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
@@ -267,6 +268,37 @@ func TestGameRunRecordsATimedOutVisit(t *testing.T) {
 	require.True(t, result.Session.TimedOut)
 	require.Equal(t, "abcd1234", result.Session.SessionID)
 	require.Equal(t, 0, result.Session.Score)
+}
+
+// On the shared session pod, the session runs on the queue provisioning
+// returned, not a queue of its own.
+func TestGameRunUsesTheProvisionedQueue(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	env.SetTestTimeout(15 * time.Second)
+	env.RegisterWorkflow(GameSessionWorkflow)
+	var acts *infra.Infra
+	env.OnActivity(acts.ProvisionSessionWorker, mock.Anything, mock.Anything).
+		Return(infra.ProvisionResult{TaskQueue: "podpocalypse-sessions"}, nil)
+	env.OnActivity(acts.TeardownSessionWorker, mock.Anything, mock.Anything).Return(nil)
+	env.OnActivity(acts.AppendLead, mock.Anything, mock.Anything).Return(nil)
+	env.OnSignalExternalWorkflow(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	var got SessionInput
+	env.OnWorkflow(GameSessionWorkflow, mock.Anything, mock.Anything).Return(func(_ workflow.Context, in SessionInput) (SessionResult, error) {
+		got = in
+		return SessionResult{SessionID: in.SessionID, TimedOut: true}, nil
+	})
+	env.ExecuteWorkflow(GameRunWorkflow, RunInput{
+		SessionID:        "abcd1234",
+		PlayerID:         "player-1",
+		Name:             "Ada",
+		Title:            "SA",
+		Email:            "ada@temporal.io",
+		Duration:         time.Second,
+		ControlTaskQueue: "podpocalypse-control",
+	})
+	require.NoError(t, env.GetWorkflowError())
+	require.Equal(t, "podpocalypse-sessions", got.SessionTaskQueue)
 }
 
 func newEnv(t *testing.T) *testsuite.TestWorkflowEnvironment {

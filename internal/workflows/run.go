@@ -53,13 +53,21 @@ func GameRunWorkflow(ctx workflow.Context, in RunInput) (RunResult, error) {
 		}
 	}()
 
-	if err := workflow.ExecuteActivity(actx, acts.ProvisionSessionWorker, infra.ProvisionInput{SessionID: in.SessionID}).Get(ctx, nil); err != nil {
+	var worker infra.ProvisionResult
+	if err := workflow.ExecuteActivity(actx, acts.ProvisionSessionWorker, infra.ProvisionInput{SessionID: in.SessionID}).Get(ctx, &worker); err != nil {
 		return RunResult{}, err
+	}
+	// The booth decides where the session runs: its own queue, or the shared
+	// session pod's. Runs started before the activity returned a queue
+	// always used their own.
+	sessionQueue := worker.TaskQueue
+	if sessionQueue == "" {
+		sessionQueue = names.SessionQueue(in.SessionID)
 	}
 
 	childCtx := workflow.WithChildOptions(ctx, workflow.ChildWorkflowOptions{
 		WorkflowID:               names.SessionWorkflowID(in.SessionID),
-		TaskQueue:                names.SessionQueue(in.SessionID),
+		TaskQueue:                sessionQueue,
 		WorkflowExecutionTimeout: in.Duration + 5*time.Minute,
 		ParentClosePolicy:        enumspb.PARENT_CLOSE_POLICY_TERMINATE,
 	})
@@ -70,7 +78,7 @@ func GameRunWorkflow(ctx workflow.Context, in RunInput) (RunResult, error) {
 		Name:             in.Name,
 		Duration:         in.Duration,
 		ControlTaskQueue: in.ControlTaskQueue,
-		SessionTaskQueue: names.SessionQueue(in.SessionID),
+		SessionTaskQueue: sessionQueue,
 	}).Get(ctx, &session)
 	if err != nil {
 		return RunResult{}, err

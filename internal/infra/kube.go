@@ -12,6 +12,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+
+	"podpocalypse/internal/config"
 	"podpocalypse/internal/names"
 )
 
@@ -138,9 +140,16 @@ func (a *Infra) currentUID(ctx context.Context, sessionID string) (string, error
 	return string(chosen.UID), nil
 }
 
+// listSessionPods lists the pods running sessionID's worker: its own
+// Deployment's, or on config.RuntimePod the shared session pod, which every
+// session's crash deletes.
 func (a *Infra) listSessionPods(ctx context.Context, sessionID string) ([]corev1.Pod, error) {
+	selector := sessionLabel + "=" + sessionID
+	if a.Runtime == config.RuntimePod {
+		selector = a.PodSelector
+	}
 	list, err := a.Kube.CoreV1().Pods(a.Namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: sessionLabel + "=" + sessionID,
+		LabelSelector: selector,
 	})
 	if err != nil {
 		return nil, err

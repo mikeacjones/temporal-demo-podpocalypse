@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"podpocalypse/internal/game"
@@ -16,6 +17,15 @@ const (
 	RoleSession         = "session"
 	RuntimeProcess      = "process"
 	RuntimeKubernetes   = "kubernetes"
+	// RuntimePod runs every session on one long-lived worker pod that polls
+	// SessionTaskQueue; a crash deletes that pod. The catalog runs this way,
+	// since its components are fixed and the booth cannot create Deployments.
+	RuntimePod = "pod"
+
+	DefaultSessionQueue       = "podpocalypse-sessions"
+	DefaultSessionPodSelector = "app.kubernetes.io/component=sessions"
+
+	serviceAccountNamespaceFile = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
 )
 
 type Config struct {
@@ -34,14 +44,21 @@ type Config struct {
 	Runtime           string
 	KubeNamespace     string
 	SessionImage      string
-	RecoveryDelay     time.Duration
-	GameDuration      time.Duration
-	LeadPath          string
-	AdminToken        string
-	PodName           string
-	AuthVerifyURL     string
-	PublicURL         string
-	LeadsEndpoint     string
+	// SessionQueue and SessionPodSelector are the shared session worker of
+	// RuntimePod: the queue it polls and the label selector of its pod.
+	SessionQueue       string
+	SessionPodSelector string
+	// K9s serves the read-only k9s panel when the booth can reach the
+	// Kubernetes API. K9S=off turns it off.
+	K9s           bool
+	RecoveryDelay time.Duration
+	GameDuration  time.Duration
+	LeadPath      string
+	AdminToken    string
+	PodName       string
+	AuthVerifyURL string
+	PublicURL     string
+	LeadsEndpoint string
 	// DevAuthEmail stands in for sign-in on a local booth only.
 	DevAuthEmail string
 	// The field demo platform's sign-in (FIELDKIT_*, set on every demo pod).
@@ -56,33 +73,36 @@ type Config struct {
 
 func FromEnv() (Config, error) {
 	cfg := Config{
-		Role:              env("ROLE", RoleBooth),
-		HTTPAddr:          env("HTTP_ADDR", ":8080"),
-		TemporalAddress:   env("TEMPORAL_ADDRESS", "127.0.0.1:7233"),
-		TemporalNamespace: env("TEMPORAL_NAMESPACE", "default"),
-		TemporalAPIKey:    os.Getenv("TEMPORAL_API_KEY"),
-		TemporalTLSCert:   os.Getenv("TEMPORAL_TLS_CERT"),
-		TemporalTLSKey:    os.Getenv("TEMPORAL_TLS_KEY"),
-		TemporalTLSServer: os.Getenv("TEMPORAL_TLS_SERVER_NAME"),
-		TemporalUI:        os.Getenv("TEMPORAL_UI_URL"),
-		ControlQueue:      env("CONTROL_TASK_QUEUE", DefaultControlQueue),
-		TaskQueue:         os.Getenv("TASK_QUEUE"),
-		SessionID:         os.Getenv("SESSION_ID"),
-		Runtime:           env("RUNTIME", RuntimeProcess),
-		KubeNamespace:     env("POD_NAMESPACE", "podpocalypse"),
-		SessionImage:      env("SESSION_IMAGE", "podpocalypse:dev"),
-		RecoveryDelay:     4 * time.Second,
-		GameDuration:      game.DefaultDuration,
-		LeadPath:          os.Getenv("LEAD_PATH"),
-		AdminToken:        os.Getenv("ADMIN_TOKEN"),
-		PodName:           env("POD_NAME", ""),
-		AuthVerifyURL:     os.Getenv("AUTH_VERIFY_URL"),
-		PublicURL:         os.Getenv("PUBLIC_URL"),
-		LeadsEndpoint:     os.Getenv("EVENT_LEADS_ENDPOINT"),
-		DevAuthEmail:      os.Getenv("DEV_AUTH_EMAIL"),
-		PlatformVerifyURL: os.Getenv("FIELDKIT_AUTH_VERIFY_URL"),
-		PlatformCookie:    os.Getenv("FIELDKIT_AUTH_COOKIE"),
-		PlatformLoginURL:  os.Getenv("FIELDKIT_LOGIN_URL"),
+		Role:               env("ROLE", RoleBooth),
+		HTTPAddr:           env("HTTP_ADDR", ":8080"),
+		TemporalAddress:    env("TEMPORAL_ADDRESS", "127.0.0.1:7233"),
+		TemporalNamespace:  env("TEMPORAL_NAMESPACE", "default"),
+		TemporalAPIKey:     os.Getenv("TEMPORAL_API_KEY"),
+		TemporalTLSCert:    os.Getenv("TEMPORAL_TLS_CERT"),
+		TemporalTLSKey:     os.Getenv("TEMPORAL_TLS_KEY"),
+		TemporalTLSServer:  os.Getenv("TEMPORAL_TLS_SERVER_NAME"),
+		TemporalUI:         os.Getenv("TEMPORAL_UI_URL"),
+		ControlQueue:       env("CONTROL_TASK_QUEUE", DefaultControlQueue),
+		TaskQueue:          os.Getenv("TASK_QUEUE"),
+		SessionID:          os.Getenv("SESSION_ID"),
+		Runtime:            env("RUNTIME", RuntimeProcess),
+		KubeNamespace:      env("POD_NAMESPACE", ownNamespace()),
+		SessionImage:       env("SESSION_IMAGE", "podpocalypse:dev"),
+		SessionQueue:       env("SESSION_TASK_QUEUE", DefaultSessionQueue),
+		SessionPodSelector: env("SESSION_POD_SELECTOR", DefaultSessionPodSelector),
+		K9s:                os.Getenv("K9S") != "off",
+		RecoveryDelay:      4 * time.Second,
+		GameDuration:       game.DefaultDuration,
+		LeadPath:           os.Getenv("LEAD_PATH"),
+		AdminToken:         os.Getenv("ADMIN_TOKEN"),
+		PodName:            env("POD_NAME", ""),
+		AuthVerifyURL:      os.Getenv("AUTH_VERIFY_URL"),
+		PublicURL:          os.Getenv("PUBLIC_URL"),
+		LeadsEndpoint:      os.Getenv("EVENT_LEADS_ENDPOINT"),
+		DevAuthEmail:       os.Getenv("DEV_AUTH_EMAIL"),
+		PlatformVerifyURL:  os.Getenv("FIELDKIT_AUTH_VERIFY_URL"),
+		PlatformCookie:     os.Getenv("FIELDKIT_AUTH_COOKIE"),
+		PlatformLoginURL:   os.Getenv("FIELDKIT_LOGIN_URL"),
 	}
 	// On by default exactly where the platform's edge sets the headers.
 	cfg.TrustIdentityHeaders = cfg.PlatformVerifyURL != ""
@@ -113,9 +133,9 @@ func FromEnv() (Config, error) {
 		return Config{}, fmt.Errorf("ROLE must be booth or session, got %q", cfg.Role)
 	}
 	switch cfg.Runtime {
-	case RuntimeProcess, RuntimeKubernetes:
+	case RuntimeProcess, RuntimeKubernetes, RuntimePod:
 	default:
-		return Config{}, fmt.Errorf("RUNTIME must be process or kubernetes, got %q", cfg.Runtime)
+		return Config{}, fmt.Errorf("RUNTIME must be process, kubernetes or pod, got %q", cfg.Runtime)
 	}
 	if cfg.DevAuthEmail != "" && (cfg.AuthVerifyURL != "" || cfg.PlatformVerifyURL != "" || !localURL(cfg.PublicURL)) {
 		return Config{}, fmt.Errorf("DEV_AUTH_EMAIL needs a localhost PUBLIC_URL and no AUTH_VERIFY_URL or FIELDKIT_AUTH_VERIFY_URL")
@@ -127,6 +147,22 @@ func FromEnv() (Config, error) {
 		return Config{}, fmt.Errorf("SESSION_IMAGE is required when RUNTIME=kubernetes")
 	}
 	return cfg, nil
+}
+
+// UsesKube reports whether the booth talks to the Kubernetes API.
+func (c Config) UsesKube() bool {
+	return c.Runtime == RuntimeKubernetes || c.Runtime == RuntimePod
+}
+
+// ownNamespace is the pod's namespace from its service account token mount,
+// for clusters where the manifest cannot set POD_NAMESPACE from the downward
+// API (the catalog's DemoProject has no fieldRef).
+func ownNamespace() string {
+	ns, err := os.ReadFile(serviceAccountNamespaceFile)
+	if err != nil || strings.TrimSpace(string(ns)) == "" {
+		return "podpocalypse"
+	}
+	return strings.TrimSpace(string(ns))
 }
 
 func env(key, fallback string) string {

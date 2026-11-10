@@ -23,12 +23,16 @@ import (
 // Infra is the control-plane activity set. Kubernetes clients and the process
 // supervisor live here, not in workflow inputs, so credentials never enter history.
 type Infra struct {
-	Runtime           string
-	Namespace         string
-	Image             string
-	Client            client.Client
-	Supervisor        *Supervisor
-	Kube              kubernetes.Interface
+	Runtime    string
+	Namespace  string
+	Image      string
+	Client     client.Client
+	Supervisor *Supervisor
+	Kube       kubernetes.Interface
+	// SessionQueue and PodSelector are the shared session worker of
+	// config.RuntimePod.
+	SessionQueue      string
+	PodSelector       string
 	TemporalAddress   string
 	TemporalNamespace string
 	TemporalAPIKey    string
@@ -43,6 +47,11 @@ type Infra struct {
 
 type ProvisionInput struct {
 	SessionID string
+}
+
+// ProvisionResult names the task queue the session's worker polls.
+type ProvisionResult struct {
+	TaskQueue string
 }
 
 type killMarker struct {
@@ -81,27 +90,33 @@ func (s *SessionActivities) IdentifyWorker(context.Context) (WorkerIdentity, err
 	return WorkerIdentity{Pod: pod, PID: os.Getpid()}, nil
 }
 
-func (a *Infra) ProvisionSessionWorker(ctx context.Context, in ProvisionInput) error {
+func (a *Infra) ProvisionSessionWorker(ctx context.Context, in ProvisionInput) (ProvisionResult, error) {
 	if err := names.RequireSessionID(in.SessionID); err != nil {
-		return temporal.NewNonRetryableApplicationError(err.Error(), "BadSession", err)
+		return ProvisionResult{}, temporal.NewNonRetryableApplicationError(err.Error(), "BadSession", err)
 	}
 	queue := names.SessionQueue(in.SessionID)
 	switch a.Runtime {
 	case config.RuntimeKubernetes:
 		if err := a.ensureDeployment(ctx, in.SessionID, queue); err != nil {
-			return err
+			return ProvisionResult{}, err
 		}
 	case config.RuntimeProcess:
 		if a.Supervisor == nil {
-			return temporal.NewNonRetryableApplicationError("process supervisor is not configured", "BadRuntime", nil)
+			return ProvisionResult{}, temporal.NewNonRetryableApplicationError("process supervisor is not configured", "BadRuntime", nil)
 		}
 		if err := a.Supervisor.Start(in.SessionID, queue); err != nil {
-			return err
+			return ProvisionResult{}, err
 		}
+	case config.RuntimePod:
+		// The shared session pod is already running; nothing to create.
+		queue = a.SessionQueue
 	default:
-		return temporal.NewNonRetryableApplicationError("unknown runtime "+a.Runtime, "BadRuntime", nil)
+		return ProvisionResult{}, temporal.NewNonRetryableApplicationError("unknown runtime "+a.Runtime, "BadRuntime", nil)
 	}
-	return a.waitForPoller(ctx, queue)
+	if err := a.waitForPoller(ctx, queue); err != nil {
+		return ProvisionResult{}, err
+	}
+	return ProvisionResult{TaskQueue: queue}, nil
 }
 
 func (a *Infra) TeardownSessionWorker(ctx context.Context, sessionID string) error {
@@ -113,6 +128,9 @@ func (a *Infra) TeardownSessionWorker(ctx context.Context, sessionID string) err
 			return nil
 		}
 		return a.Supervisor.Stop(sessionID)
+	case config.RuntimePod:
+		// Other sessions share the pod; it stays.
+		return nil
 	default:
 		return temporal.NewNonRetryableApplicationError("unknown runtime "+a.Runtime, "BadRuntime", nil)
 	}
@@ -130,7 +148,7 @@ func (a *Infra) DeleteSessionPod(ctx context.Context, sessionID string) error {
 			return err
 		}
 	}
-	if a.Runtime == config.RuntimeKubernetes {
+	if a.Runtime == config.RuntimeKubernetes || a.Runtime == config.RuntimePod {
 		return a.killPod(ctx, sessionID, marker)
 	}
 	return a.killProcess(ctx, sessionID, marker)

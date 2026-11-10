@@ -1,0 +1,20 @@
+# The pod table on a public screen: no node names or pod IPs. k9s 0.51 keeps
+# columns a view leaves out, after the listed ones, so the rest are hidden
+# with |H (the metrics columns appear only on clusters with metrics-server).
+views:
+  v1/pods:
+    columns:
+      - NAME
+      - READY
+      - STATUS
+      - RESTARTS
+      - AGE
+      - PF|H
+      - IP|H
+      - NODE|H
+      - CPU|H
+      - MEM|H
+      - "%CPU/R|H"
+      - "%CPU/L|H"
+      - "%MEM/R|H"
+      - "%MEM/L|H"

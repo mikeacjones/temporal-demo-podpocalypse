@@ -1,0 +1,16 @@
+# k9s for the booth screen's pod panel, used via K9S_CONFIG_DIR. The panel is
+# display-only: the browser never sends keystrokes, and k9s runs read-only on
+# top of that, so nothing can be deleted or exec'd from it.
+k9s:
+  refreshRate: 1
+  readOnly: true
+  skipLatestRevCheck: true
+  noExitOnCtrlC: true
+  ui:
+    skin: temporal
+    enableMouse: false
+    headless: true
+    logoless: true
+    crumbsless: true
+    splashless: true
+    noIcons: false

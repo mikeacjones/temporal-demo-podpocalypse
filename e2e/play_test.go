@@ -154,7 +154,7 @@ func TestPlaythrough(t *testing.T) {
 	for time.Now().Before(deadline) {
 		getJSON(t, "http://127.0.0.1:18080/api/leaderboard", &board)
 		for _, row := range board {
-			if row.Name == "Ada Lovelace" && row.Score == current.Score {
+			if row.Name == "Ada" && row.Score == current.Score {
 				goto prize
 			}
 		}

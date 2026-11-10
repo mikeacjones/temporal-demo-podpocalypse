@@ -7,6 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/xterm.css">
   <style>
     :root {
       --shaft: #080a20;
@@ -21,6 +22,10 @@
     * { box-sizing: border-box; }
     html, body { margin: 0; width: 100%; height: 100%; height: 100dvh; background: var(--shaft); color: var(--ink); overflow: hidden; }
     body { font-family: "Avenir Next", "Segoe UI", sans-serif; }
+    /* The pointer is hidden over the game. It comes back over the form and
+       the controls people click. */
+    body { cursor: none; }
+    .dock, .result a, .queue .go { cursor: auto; }
     canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
     button { font: inherit; cursor: pointer; }
     :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
@@ -177,7 +182,54 @@
     .queue ol li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
     .queue .go { margin-top: 8px; padding: 8px 14px; min-height: 44px; }
     body.event .worker { left: 28px; bottom: auto; top: 22px; }
+    /* Live from the cluster: k9s and the flight's Event History, a strip along
+       the bottom between the queue and the standings. Its top stays at or
+       below 88% of the screen, under the lowest gate opening. Taps fall
+       through to the game. */
+    .ops {
+      position: fixed; z-index: 4; bottom: 12px; left: var(--ops-left, 16px); right: 268px;
+      height: clamp(96px, calc(12vh - 12px), 152px);
+      display: flex; gap: 10px; pointer-events: none;
+    }
+    .ops-pane {
+      flex: 1 1 0; min-width: 0; display: flex; flex-direction: column;
+      padding: 5px 8px 6px; background: rgba(12, 14, 43, 0.82); border: 1px solid var(--line);
+    }
+    .ops-pane.k9s { flex: 0 0 38%; }
+    .ops-head {
+      margin: 0 0 4px; display: flex; justify-content: space-between; gap: 10px;
+      color: #aebed9; font: 500 11px "Noto Sans Mono", ui-monospace, Menlo, monospace;
+      letter-spacing: 0.04em; text-transform: uppercase; white-space: nowrap; overflow: hidden;
+    }
+    .ops-head b { color: var(--ink); font-weight: 700; }
+    .term { flex: 1; min-height: 0; overflow: hidden; }
+    .term .xterm, .term .xterm-viewport { background: transparent !important; }
+    .term .xterm-viewport { overflow: hidden !important; }
+    .ticks {
+      position: relative; flex: 1; min-height: 0; overflow: hidden;
+      display: flex; gap: 2px; align-items: flex-end; justify-content: flex-end;
+    }
+    .ticks i { flex: 0 0 4px; height: 100%; background: var(--pod); }
+    .ticks i.task { height: 45%; background: #465a78; }
+    .ticks i.activity { background: #64d8ff; }
+    .ticks i.timer { background: #fecb2f; }
+    .ticks i.life { background: var(--ink); }
+    .ticks i.crash, .ticks i.failed { background: var(--hazard); }
+    .ticks i.new { background: #1ff1a5; }
+    .ticks .sweep {
+      position: absolute; top: 0; bottom: 0; left: 0; width: 18%;
+      background: linear-gradient(90deg, transparent, rgba(31, 241, 165, 0.55), transparent);
+      animation: sweep 1.6s ease-in-out both;
+    }
+    @keyframes sweep { from { transform: translateX(-100%); } to { transform: translateX(560%); } }
+    .ops-line {
+      margin: 4px 0 0; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      font: 400 11px "Noto Sans Mono", ui-monospace, Menlo, monospace;
+    }
+    .ops-line.replay { color: #1ff1a5; }
+    body.flying:not(.event) .worker { bottom: auto; top: 22px; }
     @media (max-width: 720px), (max-height: 520px) {
+      .ops { display: none; }
       .dock {
         left: max(8px, env(safe-area-inset-left));
         right: max(8px, env(safe-area-inset-right));
@@ -237,6 +289,7 @@
     }
     @media (prefers-reduced-motion: reduce) {
       .stamp { transform: translate(-50%, -50%); }
+      .ticks .sweep { display: none; }
     }
   </style>
 </head>
@@ -288,6 +341,21 @@
     <ol id="standings"></ol>
   </aside>
   <div class="worker" id="worker"></div>
+
+  <section class="ops hidden" id="ops" aria-label="Live from the cluster">
+    <div class="ops-pane k9s" id="k9spane">
+      <p class="ops-head"><span>k9s · pods</span><span id="k9snote">read-only</span></p>
+      <div class="term" id="term"></div>
+    </div>
+    <div class="ops-pane">
+      <p class="ops-head"><span>Event History · <b id="histcount">0</b> events</span><span id="histworker"></span></p>
+      <div class="ticks" id="ticks"></div>
+      <p class="ops-line" id="histline" aria-live="polite"></p>
+    </div>
+  </section>
+
+  <script src="/assets/xterm.js"></script>
+  <script src="/assets/addon-fit.js"></script>
 
   <script>
     const canvas = document.querySelector("#shaft");
@@ -1596,6 +1664,7 @@
     function finish(s) {
       if (flight.mode === "done") return;
       stopBed();
+      ops.hide();
       flight.mode = "done";
       flight.score = s.score;
       flight.crashes = s.crashes;
@@ -1633,6 +1702,7 @@
 
     function resetKiosk() {
       clearTimeout(flight.resetTimer);
+      ops.hide();
       flight.mode = "attract";
       flight.sessionId = "";
       flight.score = 0;
@@ -1696,7 +1766,7 @@
         rows.slice(0, 8).forEach((row, i) => {
           const li = document.createElement("li");
           li.innerHTML = "<span>" + (i + 1) + "</span><span class='who'></span><span class='pts'></span>";
-          li.children[1].textContent = row.name + (row.title ? "  " + row.title : "");
+          li.children[1].textContent = row.name;
           li.children[2].textContent = row.score;
           list.appendChild(li);
         });
@@ -1785,6 +1855,163 @@
       }
     });
 
+    // ------------------------------------------------ live from the cluster
+    // The bottom strip during a flight: a read-only k9s of the booth's
+    // namespace, and this flight's real Event History as Temporal writes it.
+    const ops = (() => {
+      const panel = document.querySelector("#ops");
+      const k9sPane = document.querySelector("#k9spane");
+      const termBox = document.querySelector("#term");
+      const ticks = document.querySelector("#ticks");
+      const line = document.querySelector("#histline");
+      const count = document.querySelector("#histcount");
+      const workerLabel = document.querySelector("#histworker");
+      const MAX_TICKS = 400;
+      let term = null, fit = null, ws = null, history = null;
+      let events = 0, lastTaskWorker = "", replayTimer = 0;
+
+      function place() {
+        const queueBox = document.querySelector("#queue");
+        const left = queueBox.classList.contains("hidden") ? 16 : queueBox.getBoundingClientRect().right + 10;
+        panel.style.setProperty("--ops-left", left + "px");
+      }
+      const shortWorker = (id) => (id || "").replace(/^\d+@/, "").replace(/@$/, "");
+
+      // ---- k9s: output only. Keystrokes never leave the page, so Space and
+      // Enter stay with the game.
+      function sizeTerm() {
+        if (!term) return;
+        // Nine rows: k9s's info line, the table's borders and header, up to
+        // four pods (two while one is replaced), and its status line.
+        term.options.fontSize = Math.max(8, Math.min(13, Math.floor(termBox.clientHeight / 9 / 1.2)));
+        try { fit.fit(); } catch (e) { /* not laid out yet */ }
+        if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+      }
+      function openK9s() {
+        if (!meta.k9s || typeof Terminal === "undefined") {
+          k9sPane.classList.add("hidden");
+          return;
+        }
+        k9sPane.classList.remove("hidden");
+        document.querySelector("#k9snote").textContent = "read-only";
+        term = new Terminal({
+          fontFamily: '"Noto Sans Mono", ui-monospace, Menlo, monospace',
+          fontSize: 10, lineHeight: 1.0, scrollback: 0, disableStdin: true,
+          cursorBlink: false, cursorStyle: "underline", allowTransparency: true,
+          theme: {
+            background: "#00000000", foreground: "#f8fafc", cursor: "#00000000",
+            black: "#141414", red: "#ff5555", green: "#1ff1a5", yellow: "#fecb2f", blue: "#7f86f1", magenta: "#b664ff", cyan: "#4fd8ff", white: "#f8fafc",
+            brightBlack: "#465a78", brightRed: "#ff8080", brightGreen: "#59fda0", brightYellow: "#ffe08a", brightBlue: "#a5a9f5", brightMagenta: "#cfa0ff", brightCyan: "#9be9ff", brightWhite: "#ffffff",
+          },
+        });
+        fit = new FitAddon.FitAddon();
+        term.loadAddon(fit);
+        term.open(termBox);
+        ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/api/k9s");
+        ws.binaryType = "arraybuffer";
+        ws.onopen = sizeTerm;
+        ws.onmessage = (e) => term && term.write(new Uint8Array(e.data));
+        ws.onclose = () => {
+          if (term) document.querySelector("#k9snote").textContent = "disconnected";
+        };
+        requestAnimationFrame(sizeTerm);
+      }
+      function closeK9s() {
+        if (ws) { ws.onclose = null; ws.close(); ws = null; }
+        if (term) { term.dispose(); term = null; }
+        termBox.innerHTML = "";
+      }
+
+      // ---- Event History
+      function kind(e) {
+        const t = e.type;
+        if (/Failed|TimedOut|Terminated/.test(t)) return "failed";
+        if (t.startsWith("WorkflowTask")) return "task";
+        if (t.startsWith("ActivityTask")) return "activity";
+        if (t.startsWith("Timer")) return "timer";
+        if (t.startsWith("WorkflowExecutionUpdate")) return e.name === "crash" ? "crash" : "update";
+        return "life";
+      }
+      function describe(e) {
+        let text = "#" + e.id + " " + e.type;
+        if (e.name) text += " · " + e.name;
+        if (e.identity) text += " · " + shortWorker(e.identity);
+        return text;
+      }
+      function addEvent(e) {
+        events++;
+        count.textContent = String(events);
+        const tick = document.createElement("i");
+        tick.className = kind(e);
+        tick.title = describe(e);
+        ticks.appendChild(tick);
+        while (ticks.querySelectorAll("i").length > MAX_TICKS) ticks.querySelector("i").remove();
+        if (e.type === "WorkflowTaskStarted" && e.identity) {
+          const worker = e.identity;
+          // A Workflow Task picked up by a different worker than the last one
+          // means a worker with no cached state: it replays every event so far
+          // to rebuild the flight before it runs the next line of code.
+          if (lastTaskWorker && worker !== lastTaskWorker) {
+            tick.className = "new";
+            replay(e.id - 1, shortWorker(worker));
+          }
+          lastTaskWorker = worker;
+          workerLabel.textContent = shortWorker(worker);
+        }
+        if (!line.classList.contains("replay")) line.textContent = describe(e);
+      }
+      function replay(n, worker) {
+        clearTimeout(replayTimer);
+        line.classList.add("replay");
+        line.textContent = "New worker " + worker + " replayed " + n + " events to rebuild the flight";
+        if (!reduce) {
+          const sweep = document.createElement("span");
+          sweep.className = "sweep";
+          ticks.appendChild(sweep);
+          sweep.addEventListener("animationend", () => sweep.remove());
+        }
+        replayTimer = setTimeout(() => line.classList.remove("replay"), 4000);
+      }
+      function resetHistory() {
+        events = 0;
+        lastTaskWorker = "";
+        clearTimeout(replayTimer);
+        ticks.innerHTML = "";
+        count.textContent = "0";
+        workerLabel.textContent = "";
+        line.textContent = "";
+        line.classList.remove("replay");
+      }
+      function openHistory(sessionId) {
+        history = new EventSource("/api/sessions/" + sessionId + "/history");
+        // Each connection starts from the first event, so a reconnect redraws.
+        history.onopen = resetHistory;
+        history.onmessage = (m) => addEvent(JSON.parse(m.data));
+        history.addEventListener("closed", () => { history.close(); history = null; });
+      }
+      function closeHistory() {
+        if (history) { history.close(); history = null; }
+      }
+
+      function show(sessionId) {
+        hide();
+        resetHistory();
+        document.body.classList.add("flying");
+        panel.classList.remove("hidden");
+        place();
+        openK9s();
+        openHistory(sessionId);
+      }
+      function hide() {
+        closeHistory();
+        closeK9s();
+        document.body.classList.remove("flying");
+        panel.classList.add("hidden");
+      }
+      addEventListener("resize", () => { if (!panel.classList.contains("hidden")) { place(); sizeTerm(); } });
+      return { show, hide, place };
+    })();
+
     function beginFlight(body) {
       const s = body.state;
       flight.sessionId = body.sessionId;
@@ -1824,6 +2051,7 @@
       armCourse();
       startBed();
       paintQueue();
+      if (!boardOnly) ops.show(flight.sessionId);
     }
 
     async function postQueue(path, body) {
@@ -1936,6 +2164,7 @@
       }
       // Big while nobody is flying or waiting, so people across the aisle can scan it.
       panel.classList.toggle("big", flight.mode === "attract" && !queue.calling && !waiting.length && !v.current);
+      ops.place();
       tickQueue();
     }
     document.querySelector("#queuego").addEventListener("click", startTurn);

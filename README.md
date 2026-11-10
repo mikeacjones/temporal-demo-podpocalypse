@@ -54,6 +54,38 @@ spawns a child process per session and restarts it `RECOVERY_DELAY` after it
 exits. `RUNTIME=kubernetes` creates a one-replica Deployment per session and
 deletes the running pod.
 
+`RUNTIME=pod` is how the tmprl-demo.cloud catalog runs it. There, components
+are fixed and the booth cannot create Deployments, so every session runs on
+one long-lived worker pod (`ROLE=session`, `TASK_QUEUE=podpocalypse-sessions`).
+`ProvisionSessionWorker` returns that queue and the session starts on it. A
+crash deletes that pod by UID, picked by `SESSION_POD_SELECTOR` (default
+`app.kubernetes.io/component=sessions`), and its Deployment starts a
+replacement. Every flight in progress loses its worker at once, which is what
+happens to every Workflow on a Worker that dies. The booth needs `get`, `list`,
+`watch` and `delete` on pods in its namespace. In the catalog that is a manual
+step for now: see [deploy/catalog/README.md](deploy/catalog/README.md).
+
+## What the screen shows
+
+During a flight a strip along the bottom, between the queue and the
+standings, shows two live views:
+
+- **k9s**, read-only, watching the booth's namespace. It appears only when the
+  booth runs in a cluster with a mounted service account token
+  (`RUNTIME=kubernetes` or `pod`; `K9S=off` turns it off). The page never
+  sends k9s a keystroke, so Space and Enter stay with the game. Pod IPs and
+  node names are hidden.
+- **Event History**, streamed from `GET /api/sessions/<id>/history`: the
+  session Workflow's real history, one tick per event, as Temporal writes it.
+  The booth long-polls history, which is not a Query, so it keeps flowing while
+  the session worker is down. When a Workflow Task is picked up by a different
+  worker than the one before, the strip says that worker replayed the events
+  so far to rebuild the flight. That much is real; the sweep across the ticks
+  is drawn for the eye, since replay itself takes milliseconds.
+
+The standings show first names only. Full names and titles stay on the player
+workflow.
+
 ## Events and the queue
 
 A signed-in Temporal employee can start an event from the booth's front page,
@@ -153,3 +185,7 @@ go test -tags e2e -count=1 -timeout 4m ./e2e
 The e2e test starts the dev server in Docker, plays a game through the HTTP
 API, checks that a crash leaves the session with no worker, then checks
 the leaderboard, the prize route, and the lead file.
+
+Neither covers `RUNTIME=pod`. Check it on a local kind cluster laid out like a
+catalog runtime namespace, as described in
+[deploy/catalog/README.md](deploy/catalog/README.md#try-it-locally).

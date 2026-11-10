@@ -89,3 +89,42 @@ func sessionPod(sessionID, name, uid string) *corev1.Pod {
 		Status: corev1.PodStatus{Phase: corev1.PodRunning},
 	}
 }
+
+// On the shared session pod, any session's crash deletes that pod and never
+// the booth that runs beside it.
+func TestPodRuntimeDeletesOnlyTheSessionPod(t *testing.T) {
+	booth := componentPod("booth-7d9f", "uid-booth", "booth")
+	sessions := componentPod("sessions-5c4b", "uid-sessions", "sessions")
+	kube := fake.NewClientset(booth, sessions)
+	a := &Infra{
+		Kube:        kube,
+		Namespace:   "podpocalypse",
+		Runtime:     config.RuntimePod,
+		PodSelector: config.DefaultSessionPodSelector,
+	}
+	if err := a.DeleteSessionPod(context.Background(), "abcd1234"); err != nil {
+		t.Fatal(err)
+	}
+	left, err := kube.CoreV1().Pods("podpocalypse").List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left.Items) != 1 || left.Items[0].Name != "booth-7d9f" {
+		t.Fatalf("pods after crash: %+v", left.Items)
+	}
+}
+
+func componentPod(name, uid, component string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: "podpocalypse",
+			Labels: map[string]string{
+				"app.kubernetes.io/name":      "podpocalypse",
+				"app.kubernetes.io/component": component,
+			},
+			UID: types.UID(uid),
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+}
