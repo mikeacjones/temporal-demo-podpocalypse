@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -321,10 +322,23 @@ func (s *Server) crash(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// The crash update deletes the session worker and does not finish until
-	// the replacement is polling. Stop waiting here so the page can freeze
-	// while the clock keeps moving.
-	s.completeUpdate(w, r, id, workflows.UpdateCrash, 1200*time.Millisecond, nil, &workflows.CrashResult{})
+	// Wait, however long it takes, until the session workflow has accepted the
+	// crash, so a slow worker cannot lose it. Deleting the pod and waiting for
+	// its replacement come after that; the page follows them through the
+	// session's state. A crash the validator rejects also returns here without
+	// error, and the page sends it again while the state still shows the
+	// flight playing.
+	_, err := s.Client.UpdateWorkflow(r.Context(), client.UpdateWorkflowOptions{
+		WorkflowID:   names.SessionWorkflowID(id),
+		UpdateName:   workflows.UpdateCrash,
+		WaitForStage: client.WorkflowUpdateStageAccepted,
+	})
+	if err != nil {
+		slog.Warn("crash update failed, the page will retry", "session", id, "err", err)
+		writeErr(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{})
 }
 
 func sessionID(w http.ResponseWriter, r *http.Request) (string, bool) {

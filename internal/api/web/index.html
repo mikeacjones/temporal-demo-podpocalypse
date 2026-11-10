@@ -384,8 +384,7 @@
       invuln: 0,
       shake: 0,
       sending: false,
-      crashAccepted: false,
-      crashSending: false,
+      crashSending: "",
       debris: [],
       respawnFlash: 0,
       hazards: [],
@@ -583,18 +582,23 @@
       blip(680, 0.12, "square");
     }
 
+    // The request stays open until the session workflow accepts the crash.
+    // The session's state, not this response, says whether it took: while it
+    // still shows the flight playing with no new crash, pollSession sends it
+    // again. crashSending holds the session ID, so a request still open from
+    // an earlier flight does not block this one.
     async function postCrash() {
-      if (!flight.sessionId || flight.crashAccepted || flight.crashSending) return;
-      flight.crashSending = true;
+      const id = flight.sessionId;
+      if (!id || flight.crashSending === id) return;
+      flight.crashSending = id;
       try {
-        const res = await fetch("/api/sessions/" + flight.sessionId + "/crash", {
+        await fetch("/api/sessions/" + id + "/crash", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: "{}",
         });
-        if (res.status === 202 || res.status === 200) flight.crashAccepted = true;
-      } catch (e) { /* poll will retry while the flight is still live */ }
-      flight.crashSending = false;
+      } catch (e) { /* pollSession retries */ }
+      if (flight.crashSending === id) flight.crashSending = "";
     }
 
     async function flushGates() {
@@ -1640,7 +1644,7 @@
           flight.worker = s.workerPod;
           document.querySelector("#worker").textContent = s.workerPod;
         }
-        if (flight.mode === "frozen" && !flight.standbyRescue && !flight.crashAccepted && s.phase === "playing" && s.crashes === flight.crashes) {
+        if (flight.mode === "frozen" && !flight.standbyRescue && s.phase === "playing" && s.crashes === flight.crashes) {
           postCrash();
         }
         if (s.phase === "recovering" && flight.mode === "flying") {
@@ -1651,7 +1655,6 @@
           flight.crashes = s.crashes;
           flight.score = Math.max(flight.score, s.score);
           flight.acked = s.score;
-          flight.crashAccepted = false;
           flight.debris = [];
           flight.respawnFlash = 1;
           document.querySelector("#stamp").classList.add("hidden");
