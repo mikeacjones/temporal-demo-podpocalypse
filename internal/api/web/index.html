@@ -183,12 +183,13 @@
     .queue .go { margin-top: 8px; padding: 8px 14px; min-height: 44px; }
     body.event .worker { left: 28px; bottom: auto; top: 22px; }
     /* Live from the cluster: k9s and the flight's Event History, a strip along
-       the bottom between the queue and the standings. Its top stays at or
-       below 88% of the screen, under the lowest gate opening. Taps fall
-       through to the game. */
+       the bottom between the queue and the standings. Tall enough for k9s to
+       show a deleted pod and its replacement together, so its top can reach a
+       little into the lowest gate openings; it stays translucent there. Taps
+       fall through to the game. */
     .ops {
       position: fixed; z-index: 4; bottom: 12px; left: var(--ops-left, 16px); right: 268px;
-      height: clamp(96px, calc(12vh - 12px), 152px);
+      height: clamp(124px, 16vh, 196px);
       display: flex; gap: 10px; pointer-events: none;
     }
     .ops-pane {
@@ -1867,7 +1868,7 @@
       const count = document.querySelector("#histcount");
       const workerLabel = document.querySelector("#histworker");
       const MAX_TICKS = 400;
-      let term = null, fit = null, ws = null, history = null;
+      let term = null, fit = null, ws = null, history = null, reconnectTimer = 0;
       let events = 0, lastTaskWorker = "", replayTimer = 0;
 
       function place() {
@@ -1881,9 +1882,10 @@
       // Enter stay with the game.
       function sizeTerm() {
         if (!term) return;
-        // Seven rows: k9s's info line, the table's borders and header, the
-        // session pods (two while one is replaced), and its status line.
-        term.options.fontSize = Math.max(8, Math.min(14, Math.floor(termBox.clientHeight / 7 / 1.2)));
+        // Eight rows: k9s's info line, the table's borders and header, the
+        // session pods (two while one is replaced), its status line, and one
+        // spare, since a cell is a little taller than its font size.
+        term.options.fontSize = Math.max(8, Math.min(14, Math.floor(termBox.clientHeight / 8 / 1.25)));
         try { fit.fit(); } catch (e) { /* not laid out yet */ }
         if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
       }
@@ -1907,16 +1909,29 @@
         fit = new FitAddon.FitAddon();
         term.loadAddon(fit);
         term.open(termBox);
-        ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/api/k9s");
-        ws.binaryType = "arraybuffer";
-        ws.onopen = sizeTerm;
-        ws.onmessage = (e) => term && term.write(new Uint8Array(e.data));
-        ws.onclose = () => {
-          if (term) document.querySelector("#k9snote").textContent = "disconnected";
-        };
+        connectK9s();
         requestAnimationFrame(sizeTerm);
       }
+      // The booth pod itself can be replaced mid-flight (a rollout, or the
+      // cluster moving it to another node), which ends the stream. Reconnect
+      // while the flight is on; a new k9s redraws the whole screen.
+      function connectK9s() {
+        ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/api/k9s");
+        ws.binaryType = "arraybuffer";
+        ws.onopen = () => {
+          document.querySelector("#k9snote").textContent = "read-only";
+          sizeTerm();
+        };
+        ws.onmessage = (e) => term && term.write(new Uint8Array(e.data));
+        ws.onclose = () => {
+          ws = null;
+          if (!term) return;
+          document.querySelector("#k9snote").textContent = "reconnecting";
+          reconnectTimer = setTimeout(() => { if (term) connectK9s(); }, 1500);
+        };
+      }
       function closeK9s() {
+        clearTimeout(reconnectTimer);
         if (ws) { ws.onclose = null; ws.close(); ws = null; }
         if (term) { term.dispose(); term = null; }
         termBox.innerHTML = "";
