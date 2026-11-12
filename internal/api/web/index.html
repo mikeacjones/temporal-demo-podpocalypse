@@ -415,6 +415,7 @@
       solar: false,
       solarDeploy: 0,
       plasma: false,
+      raymond: 0,
       treats: 0,
       treat: null,
       nextTreat: 4,
@@ -701,6 +702,7 @@
       if (flight.boosters) flight.boosterDeploy = Math.min(1, flight.boosterDeploy + dt * 2.2);
       if (flight.solar) flight.solarDeploy = Math.min(1, flight.solarDeploy + dt * 1.35);
       flight.boosterFlash = Math.max(0, flight.boosterFlash - dt);
+      flight.raymond = Math.max(0, flight.raymond - dt);
       const speed = scrollSpeed();
       driftStars(dt, speed);
       for (const bar of flight.bars) bar.x -= speed * dt;
@@ -955,6 +957,23 @@
         ctx.textAlign = "center";
         const banner = flight.plasma ? "PLASMA DRIVE ENGAGED" : (flight.solar ? "INTER-SOLAR BOOSTER" : "TRIPLE BOOSTERS ONLINE");
         ctx.fillText(banner, flight.w * 0.5, 72);
+        ctx.restore();
+      }
+      if (flight.raymond > 0 && flight.mode === "flying") {
+        // Two beats: the greeting, then the punchline once the plasma kicks in.
+        const greeting = flight.raymond > RAYMOND_PUNCHLINE;
+        ctx.save();
+        ctx.globalAlpha = Math.min(1, flight.raymond * 1.4);
+        ctx.textAlign = "center";
+        ctx.fillStyle = greeting ? "#e7f2ec" : "#a8d4ff";
+        const size = Math.round(Math.min(greeting ? 40 : 52, flight.w / (greeting ? 13 : 15)));
+        ctx.font = greeting ? "600 " + size + "px Avenir Next, Segoe UI, sans-serif" : "800 " + size + "px Noto Sans Mono, ui-monospace, Menlo, monospace";
+        ctx.fillText(greeting ? "Welcome back, Raymond…" : "RAYMOND MODE ACTIVATED", flight.w * 0.5, flight.h * 0.3);
+        if (!greeting) {
+          ctx.font = "600 " + Math.round(Math.min(24, flight.w / 22)) + "px Avenir Next, Segoe UI, sans-serif";
+          ctx.fillStyle = "#e7f2ec";
+          ctx.fillText("Two-time champ. Plasma drive from launch.", flight.w * 0.5, flight.h * 0.3 + size * 0.9);
+        }
         ctx.restore();
       }
       ctx.restore();
@@ -1776,6 +1795,7 @@
       flight.solar = false;
       flight.solarDeploy = 0;
       flight.plasma = false;
+      flight.raymond = 0;
       flight.nextTreat = 4;
       flight.treatsOffered = 0;
       flight.bonusMs = 0;
@@ -2085,6 +2105,23 @@
       return { show, hide, place };
     })();
 
+    // Raymond won two days running, so he starts with every booster stage lit.
+    const RAYMOND_PUNCHLINE = 3;
+    function raymondMode() {
+      flight.boosters = true;
+      flight.boosterDeploy = 1;
+      flight.solar = true;
+      flight.plasma = true;
+      flight.raymond = RAYMOND_PUNCHLINE + 2.2;
+      setTimeout(() => {
+        if (flight.raymond <= 0) return;
+        blip(220, 0.2, "sawtooth");
+        setTimeout(() => blip(660, 0.16, "square"), 90);
+        setTimeout(() => blip(1320, 0.14, "square"), 200);
+        liftBed(0.36);
+      }, 2200);
+    }
+
     function beginFlight(body) {
       const s = body.state;
       flight.sessionId = body.sessionId;
@@ -2105,6 +2142,7 @@
       flight.solar = false;
       flight.solarDeploy = 0;
       flight.plasma = false;
+      flight.raymond = 0;
       flight.nextTreat = 4;
       flight.treatsOffered = 0;
       flight.bonusMs = 0;
@@ -2125,6 +2163,7 @@
       }
       document.querySelector("#join").classList.add("hidden");
       document.querySelector("#prize").classList.add("hidden");
+      if (/raymond/i.test(s.playerName || "")) raymondMode();
       flight.mode = "flying";
       armCourse();
       startBed();
