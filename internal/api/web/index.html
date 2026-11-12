@@ -416,6 +416,7 @@
       solarDeploy: 0,
       plasma: false,
       raymond: 0,
+      champ: false,
       treats: 0,
       treat: null,
       nextTreat: 4,
@@ -452,6 +453,10 @@
         flight.hazards = [];
         flight.restartWave = null;
         flight.attractIndex = 1;
+      } else {
+        // The walls reach the screen's edges, so repack them. A boulder keeps
+        // its place and its drift.
+        for (const bar of flight.bars) bar.rocks = packRocks(bar).concat(bar.rocks.filter((rock) => rock.dir));
       }
       placeShip();
     }
@@ -494,7 +499,94 @@
       const gap = gapSize();
       const margin = flight.h * 0.12;
       const usable = Math.max(1, flight.h - margin * 2 - gap);
-      return { index, x, w: barW(), gapTop: margin + hash(index) * usable, gap, scored: false };
+      const bar = { index, x, w: barW(), gapTop: margin + hash(index) * usable, gap, scored: false };
+      bar.rocks = packRocks(bar);
+      const level = driftLevel(index);
+      if (level !== null) bar.rocks.push(boulder(bar, level));
+      return bar;
+    }
+
+    // A rock's hitbox is a circle a little inside its drawn outline, so a
+    // graze that only touches a jagged corner doesn't count.
+    const ROCK_HIT = 0.85;
+
+    // Fill the column above and below the opening with rocks, top to bottom.
+    // Neighbours overlap, so the ship can't slip between them.
+    function packRocks(bar) {
+      const rocks = [];
+      const pack = (y0, y1, salt) => {
+        if (y1 - y0 < 36) return;
+        let y = y0;
+        let i = 0;
+        while (y < y1 - 10 && i < 16) {
+          const span = Math.max(24, y1 - y);
+          const radius = Math.max(15, Math.min(bar.w * 0.26, span * 0.42));
+          const side = (i + salt) % 2 === 0 ? -1 : 1;
+          const cy = Math.min(y1 - radius * 0.8, Math.max(y0 + radius * 0.8, y + radius));
+          rocks.push({ ox: side * bar.w * 0.24, cy, radius, seed: bar.index * 50 + salt * 9 + i });
+          y = cy + radius * 0.85;
+          i++;
+        }
+      };
+      pack(0, bar.gapTop, 2);
+      pack(bar.gapTop + bar.gap, flight.h, 90);
+      return rocks;
+    }
+
+    // From gate 100 each column sheds a boulder that drifts into the opening:
+    // it closes 15% of the gap at gate 100, growing to at most 25% by gate 160.
+    // Raymond flies the hardest level from launch.
+    const DRIFT_FROM = 100;
+    function driftLevel(index) {
+      if (flight.champ) return 1;
+      if (index < DRIFT_FROM) return null;
+      return Math.min(1, (index - DRIFT_FROM) / 60);
+    }
+
+    // The boulder starts tucked into the wall with its hitbox touching the
+    // gap's edge. It is at least as tall as its drift, so no slot opens
+    // between it and the wall behind it.
+    function boulder(bar, level) {
+      const travel = bar.gap * (0.15 + level * 0.1);
+      const radius = Math.max(bar.w * 0.26, travel * 0.62);
+      const fromTop = hash(bar.index + 300) < 0.5;
+      const reach = radius * ROCK_HIT;
+      return {
+        ox: 0,
+        cy: fromTop ? bar.gapTop - reach : bar.gapTop + bar.gap + reach,
+        radius,
+        seed: bar.index * 50 + 777,
+        dir: fromTop ? 1 : -1,
+        travel,
+        t: 0,
+        warn: false,
+      };
+    }
+
+    function rockY(rock) {
+      if (!rock.dir) return rock.cy;
+      const eased = rock.t * rock.t * (3 - 2 * rock.t);
+      return rock.cy + rock.dir * rock.travel * eased;
+    }
+
+    // Where a column's opening is centred once its boulder has drifted in.
+    function openMid(bar) {
+      const mid = bar.gapTop + bar.gap / 2;
+      const rock = bar.rocks.find((item) => item.dir);
+      return rock ? mid + rock.dir * rock.travel / 2 : mid;
+    }
+
+    // The boulder shakes as the column comes into view, then drifts while the
+    // column crosses the middle of the screen, settling with time to react.
+    // Progress follows distance, not time, so it keeps pace at any speed.
+    function driftBoulders(bar) {
+      const front = flight.pod.x + flight.pod.r * 1.9;
+      const ahead = (bar.x - front) / Math.max(1, flight.w - front);
+      for (const rock of bar.rocks) {
+        if (!rock.dir) continue;
+        rock.t = Math.max(rock.t, Math.min(1, (0.72 - ahead) / 0.45));
+        rock.warn = rock.t < 1 && ahead < 0.95;
+      }
     }
 
     function placeShip() {
@@ -519,8 +611,7 @@
       flight.treat = null;
       flight.restartWave = null;
       flight.nextIndex = flight.score + 1;
-      const b = flight.bars[0];
-      flight.pod.y = b.gapTop + b.gap / 2;
+      flight.pod.y = openMid(flight.bars[0]);
       flight.pod.vy = 0;
       flight.invuln = 0.7;
     }
@@ -550,14 +641,28 @@
       }
     });
 
+    // The hull as four circles along its length, tilted the way drawPod
+    // tilts it.
+    function shipCircles() {
+      const { x, y, r, vy } = flight.pod;
+      const tilt = Math.max(-0.6, Math.min(0.7, vy / 700));
+      const cos = Math.cos(tilt), sin = Math.sin(tilt);
+      return [-1.1, -0.2, 0.7, 1.3].map((along) => ({ x: x + along * r * cos, y: y + along * r * sin, r: r * 0.6 }));
+    }
+
     function hit(bar) {
-      const r = flight.pod.r;
-      const botY = bar.gapTop + bar.gap;
-      const shipLeft = flight.pod.x - r * 1.75;
-      const shipRight = flight.pod.x + r * 1.75;
-      const overlapsBar = shipRight > bar.x && shipLeft < bar.x + bar.w;
-      return overlapsBar &&
-        (flight.pod.y - r * 0.66 < bar.gapTop || flight.pod.y + r * 0.66 > botY);
+      const cx = bar.x + bar.w / 2;
+      const ship = shipCircles();
+      for (const rock of bar.rocks) {
+        const rx = cx + rock.ox;
+        const ry = rockY(rock);
+        for (const part of ship) {
+          const reach = rock.radius * ROCK_HIT + part.r;
+          const dx = part.x - rx, dy = part.y - ry;
+          if (dx * dx + dy * dy < reach * reach) return true;
+        }
+      }
+      return false;
     }
 
     function crash(cause = "Node collision") {
@@ -592,7 +697,7 @@
     function redeployStandby() {
       const bar = flight.bars.find((item) => item.x < flight.pod.x + flight.pod.r * 2 && item.x + item.w > flight.pod.x - flight.pod.r * 2)
         || flight.bars.find((item) => item.x > flight.pod.x);
-      flight.pod.y = bar ? bar.gapTop + bar.gap / 2 : flight.h * 0.45;
+      flight.pod.y = bar ? openMid(bar) : flight.h * 0.45;
       flight.pod.vy = 0;
       flight.mode = "flying";
       flight.debris = [];
@@ -722,6 +827,7 @@
       flight.bars = flight.bars.filter((bar) => bar.x + bar.w > -40);
       if (flight.treat && !flight.bars.some((bar) => bar.index === flight.treat.index)) flight.treat = null;
       for (const bar of flight.bars) {
+        driftBoulders(bar);
         if (!bar.scored && bar.x + bar.w < flight.pod.x) {
           bar.scored = true;
           flight.score++;
@@ -747,11 +853,10 @@
       const span = spacing();
       const corridor = Math.max(120, span - bar.w);
       const next = makeBar(bar.index + 1, 0);
-      const center = next.gapTop + next.gap / 2;
       const floor = flight.h - Math.max(120, flight.pod.r * 5.5);
       // Sit in the lower air between the columns. Cap the dive so a climb
       // still reaches the next opening before the rocks arrive.
-      const y = Math.min(floor, flight.h * 0.72, center + flight.h * 0.2);
+      const y = Math.min(floor, flight.h * 0.72, openMid(next) + flight.h * 0.2);
       flight.perk = { x: bar.x + bar.w + corridor * 0.5, y };
     }
 
@@ -785,7 +890,7 @@
       if (!flight.treat) return null;
       const bar = flight.bars.find((item) => item.index === flight.treat.index);
       if (!bar) return null;
-      return { x: bar.x + bar.w / 2, y: bar.gapTop + bar.gap / 2 };
+      return { x: bar.x + bar.w / 2, y: openMid(bar) };
     }
 
     function collectTreat() {
@@ -1029,7 +1134,9 @@
         return;
       }
       const { gap, gapTop } = attractOpening(beat === 0);
-      flight.bars.push({ index: flight.attractIndex, x, w: barW(), gapTop, gap, scored: true });
+      const bar = { index: flight.attractIndex, x, w: barW(), gapTop, gap, scored: true };
+      bar.rocks = packRocks(bar);
+      flight.bars.push(bar);
     }
 
     function attractTarget() {
@@ -1141,11 +1248,11 @@
         }
       }
     }
-    function drawRock(cx, cy, radius, seed) {
+    function drawRock(cx, cy, radius, seed, spin = 0) {
       const n = 7;
       ctx.beginPath();
       for (let i = 0; i < n; i++) {
-        const a = (i / n) * Math.PI * 2 - 0.5;
+        const a = (i / n) * Math.PI * 2 - 0.5 + spin;
         const wobble = 0.78 + hash(seed + i * 5) * 0.38;
         const px = cx + Math.cos(a) * radius * wobble;
         const py = cy + Math.sin(a) * radius * wobble * 0.92;
@@ -1169,24 +1276,23 @@
     }
 
     function drawRack(bar) {
-      const bot = bar.gapTop + bar.gap;
-      const pack = (y0, y1, salt) => {
-        if (y1 - y0 < 36) return;
-        let y = y0;
-        let i = 0;
-        while (y < y1 - 10 && i < 16) {
-          const span = Math.max(24, y1 - y);
-          const radius = Math.max(15, Math.min(bar.w * 0.26, span * 0.42));
-          const side = (i + salt) % 2 === 0 ? -1 : 1;
-          const ox = side * bar.w * 0.24;
-          const cy = Math.min(y1 - radius * 0.8, Math.max(y0 + radius * 0.8, y + radius));
-          drawRock(bar.x + bar.w / 2 + ox, cy, radius, bar.index * 50 + salt * 9 + i);
-          y = cy + radius * 0.85;
-          i++;
+      const cx = bar.x + bar.w / 2;
+      for (const rock of bar.rocks) {
+        if (!rock.dir) {
+          drawRock(cx + rock.ox, rock.cy, rock.radius, rock.seed);
+          continue;
         }
-      };
-      pack(0, bar.gapTop, 2);
-      pack(bot, flight.h, 90);
+        // A boulder about to break loose shakes and glows amber until it
+        // settles. With reduced motion it glows without shaking.
+        const shake = rock.warn && rock.t === 0 && !reduce ? Math.sin(performance.now() / 22) * 2.5 : 0;
+        ctx.save();
+        if (rock.warn) {
+          ctx.shadowColor = "#f3c14e";
+          ctx.shadowBlur = 18;
+        }
+        drawRock(cx + shake, rockY(rock), rock.radius, rock.seed, rock.t * rock.dir * 0.9);
+        ctx.restore();
+      }
     }
 
     function drawTreat() {
@@ -1796,6 +1902,7 @@
       flight.solarDeploy = 0;
       flight.plasma = false;
       flight.raymond = 0;
+      flight.champ = false;
       flight.nextTreat = 4;
       flight.treatsOffered = 0;
       flight.bonusMs = 0;
@@ -2105,13 +2212,15 @@
       return { show, hide, place };
     })();
 
-    // Raymond won two days running, so he starts with every booster stage lit.
+    // Raymond won two days running, so he starts with every booster stage lit
+    // and drifting boulders from the first column.
     const RAYMOND_PUNCHLINE = 3;
     function raymondMode() {
       flight.boosters = true;
       flight.boosterDeploy = 1;
       flight.solar = true;
       flight.plasma = true;
+      flight.champ = true;
       flight.raymond = RAYMOND_PUNCHLINE + 2.2;
       setTimeout(() => {
         if (flight.raymond <= 0) return;
@@ -2143,6 +2252,7 @@
       flight.solarDeploy = 0;
       flight.plasma = false;
       flight.raymond = 0;
+      flight.champ = false;
       flight.nextTreat = 4;
       flight.treatsOffered = 0;
       flight.bonusMs = 0;
